@@ -1,17 +1,30 @@
 """
-성수역 서쪽 대합실 보행자 시뮬레이션 v5
+성수역 서쪽 대합실 보행자 시뮬레이션 v6
 
-변경 이력 (v4 → v5):
-  1. 도착 모델: 균일 생성 → 열차 도착 군집(Platoon) 모델
-     - 열차 간격 180초, 1회 하차 40명 (포아송 분포)
-     - 계단에서 15초에 걸쳐 분산 도착
-  2. 게이트 선택: 선행연구 기반 파라미터 (Haghani & Sarvi, 2016)
-     - beta_dist = -0.25, beta_queue = -0.3
-  3. 다단계 의사결정 모델 (핑퐁 효과 제거):
-     - 관성(Inertia): 전환 비용 C_switch 추가
-     - Lock-in: 게이트 3m 이내 진입 시 경로 변경 비활성화
-     - 재평가 주기: 0.5초 → 3.0초
-  4. 게이트 근처 time_gap 감소 (1.06 → 0.5): 바짝 붙어 서는 심리 반영
+변경 이력 (v5 → v6):
+  1. 게이트 선택 모델: Haghani 로짓 → Gao et al. (2019) LRP 모델
+     - 효용함수: 예상 소요시간 = ω^N·대기시간 + ω^L·보행시간
+     - 보행시간에 L3(게이트→출구 거리) 포함
+     - 거리 추정 오차 ±10%, 대기 인원 추정 오차 반영
+  2. 보행자 성격 유형: adventurous/conserved/mild (Gao, 2019)
+     - VOT 가중치: (1.2/0.8), (0.8/1.2), (1.0/1.0)
+  3. 3단계 재선택 (Gao, 2019 현장관측):
+     - 1차(3.0m): 전체경로 + 대기열 → 확률적 선택 (Logit)
+     - 2차(1.7m): 접근거리만 + 대기열 → 확률적 선택
+     - 3차(1.0m): 접근거리만 → 확정적 선택 (최소 비용)
+  4. 서비스 파라미터: Gao (2019) 현장 실측
+     - 게이트 통과 속도: 0.65 m/s, 카드 태핑: 1.1s
+     - 서비스 시간 t₀ = 2.0s (피크 실측 평균)
+  5. 태그리스 사용자: 일반 보행속도로 통과 (서비스 시간 ≈ 0)
+  [유지] 도착 모델, CFSM V2, 게이트 근처 time_gap 감소
+
+파라미터 출처:
+  - CFSM V2: Tordeux et al. (2016), Weidmann (1993)
+  - 게이트 선택: Gao et al. (2019) - Beijing Subway 실측
+  - 서비스 시간(태그): Gao (2019) 실측 (🔶 한국 검증 필요)
+  - 서비스 시간(태그리스): 본 연구 가정 (🔴 우이신설선 실측 필요)
+  - 대기열 time_gap: 본 연구 설정 (🔶 검증 필요)
+  - 보행자 성격 비율: Gao (2019) 가정 1:1:1 (🔶 검증 필요)
 
 모델: CollisionFreeSpeedModelV2 (CFSM V2)
 """
@@ -66,22 +79,41 @@ PED_STRENGTH_GEOMETRY = 5.0
 PED_RANGE_GEOMETRY = 0.02
 
 # =============================================================================
-# 서비스 시간 (태그 사용자)
+# 서비스 시간 파라미터 (Gao et al., 2019 현장 실측)
 # =============================================================================
-SERVICE_MU = 0.35
-SERVICE_SIGMA = 0.35
+SERVICE_TIME_MEAN = 2.0      # 평균 서비스 시간 (초) - Gao (2019) 피크시 실측
+SERVICE_TIME_MIN = 0.8       # 최소 서비스 시간 (초)
+SERVICE_TIME_MAX = 3.7       # 최대 서비스 시간 (초)
+CARD_FEEDING_TIME = 1.1      # 카드 태핑 시간 평균 (초) - Gao (2019) 실측
+GATE_PASS_SPEED = 0.65       # 게이트 내부 통과 속도 (m/s) - Gao (2019) 실측
+
+# 태그리스 사용자: 일반 보행속도로 통과 (🔴 우이신설선 실측 필요)
+TAGLESS_SERVICE_TIME = 0.0   # 태그리스 서비스 시간 (무정지 통과)
+
+# 시나리오 변수
+TAGLESS_RATIO = 0.2          # 태그리스 사용자 비율 (0.0 ~ 1.0)
 
 # =============================================================================
-# 게이트 선택 모델 (Haghani & Sarvi, 2016 기반)
+# 게이트 선택 모델: Gao et al. (2019) LRP 모델
 # =============================================================================
-BETA_DIST = -0.25          # 거리 민감도 (선행연구: -0.21 ~ -0.31)
-BETA_QUEUE = -0.3          # 대기열 민감도 (선행연구: -0.14 ~ -0.60)
-VISION_RADIUS = 8.0        # 보행자 시야 반경 (m)
+# 보행자 성격별 시간가치(VOT) 가중치 (🔶 검증 필요)
+# adventurous: 대기 싫어함 → 먼 빈 게이트로 우회
+# conserved: 걷기 싫어함 → 가까운 게이트에서 대기
+# mild: 중립
+TEMPERAMENTS = {
+    "adventurous": {"omega_wait": 1.2, "omega_walk": 0.8},
+    "conserved":   {"omega_wait": 0.8, "omega_walk": 1.2},
+    "mild":        {"omega_wait": 1.0, "omega_walk": 1.0},
+}
+TEMPERAMENT_RATIO = [1, 1, 1]  # 모험:보수:중립 비율 (🔶 검증 필요)
 
-# 다단계 의사결정
-C_SWITCH = 1.5             # 전환 비용 (관성): 새 게이트 효용이 이만큼 높아야 변경
-LOCK_IN_DISTANCE = 3.0     # 게이트 이 거리 이내 → 경로 변경 비활성화 (m)
-REROUTE_INTERVAL = 3.0     # 경로 재평가 주기 (초)
+# 추정 오차 (Gao, 2019)
+DIST_ESTIMATION_ERROR = 0.10   # 거리 추정 오차 ±10%
+
+# 3단계 재선택 거리 (Gao, 2019 현장관측) (🔶 검증 필요)
+CHOICE_DIST_1ST = 3.0    # 1차 선택: 전체경로 고려, 확률적 (Logit)
+CHOICE_DIST_2ND = 1.7    # 2차 재선택: 접근거리만, 확률적
+CHOICE_DIST_3RD = 1.0    # 3차 재선택: 접근거리만, 확정적 (최소 비용)
 
 # 게이트 통과 구간
 GATE_ZONE_X_START = GATE_X - 0.2
@@ -118,16 +150,29 @@ def generate_arrival_schedule(rng, sim_time):
 # =============================================================================
 # 서비스 시간 샘플링
 # =============================================================================
-def sample_service_time(rng):
-    return np.clip(rng.lognormal(SERVICE_MU, SERVICE_SIGMA), 0.8, 5.0)
+def assign_temperament(rng):
+    """보행자 성격 유형 랜덤 배정 (Gao, 2019)"""
+    names = list(TEMPERAMENTS.keys())
+    weights = np.array(TEMPERAMENT_RATIO, dtype=float)
+    weights /= weights.sum()
+    return rng.choice(names, p=weights)
+
+
+def sample_service_time(rng, is_tagless=False):
+    """서비스 시간 샘플링 (Gao, 2019 실측 기반)"""
+    if is_tagless:
+        return TAGLESS_SERVICE_TIME
+    # 태그 사용자: 양의 왜도 분포, 범위 0.8~3.7s, 평균 2.0s (Gao, 2019)
+    return np.clip(rng.lognormal(
+        np.log(SERVICE_TIME_MEAN) - 0.25, 0.5), SERVICE_TIME_MIN, SERVICE_TIME_MAX)
 
 
 # =============================================================================
-# 게이트 밀도 계산
+# 게이트 대기 인원 계산
 # =============================================================================
-def count_gate_density(sim, gates, agent_data):
+def count_gate_queue(sim, gates, agent_data):
     """각 게이트에 배정된 전체 대기 인원 (서비스 완료자 제외)"""
-    density = [0] * len(gates)
+    queue = [0] * len(gates)
     for agent in sim.agents():
         aid = agent.id
         if aid not in agent_data:
@@ -135,45 +180,90 @@ def count_gate_density(sim, gates, agent_data):
         if agent_data[aid]["serviced"]:
             continue
         gi = agent_data[aid]["gate_idx"]
-        density[gi] += 1
-    return density
+        queue[gi] += 1
+    return queue
+
+
+def estimate_queue_count(rng, actual_count):
+    """대기 인원 추정 (Gao, 2019 eq.7): 인원 많을수록 오차 증가"""
+    if actual_count <= 3:
+        return actual_count
+    elif actual_count <= 5:
+        return actual_count + rng.choice([-1, 0, 1])
+    else:
+        return max(0, actual_count + rng.choice([-2, -1, 0, 1, 2]))
+
+
+def estimate_distance(rng, actual_dist):
+    """거리 추정 (Gao, 2019 eq.4): ±10% 가우시안 오차"""
+    k = np.clip(rng.normal(0, 0.03), -DIST_ESTIMATION_ERROR, DIST_ESTIMATION_ERROR)
+    return actual_dist * (1.0 + k)
+
+
+def get_exit_position(gate):
+    """게이트 통과 후 향할 출구 좌표 반환"""
+    if gate["y"] > CONCOURSE_WIDTH / 2:
+        return (EXITS[0]["x_start"] + EXITS[0]["x_end"]) / 2, EXITS[0]["y"]
+    else:
+        return (EXITS[1]["x_start"] + EXITS[1]["x_end"]) / 2, EXITS[1]["y"]
 
 
 # =============================================================================
-# 게이트 선택 (Logit + 관성)
+# 게이트 선택: Gao et al. (2019) LRP 모델
 # =============================================================================
-def choose_gate(agent_pos, gates, gate_density, vision_radius=None,
-                current_gate=None):
+def choose_gate_lrp(rng, agent_pos, agent_speed, temperament, gates,
+                    gate_queue, dist_to_gate, stage="1st"):
     """
-    효용함수: U(i) = beta_dist * dist(i) + beta_queue * queue(i)
-    경로 변경 시: U(new) must exceed U(current) + C_switch
+    Gao (2019) LRP 모델:
+      V_i,j = ω^N · (N'_j · t₀) + ω^L · ((L1' + L3') / v_i)
+      P_j = exp(-V_j) / Σ exp(-V_k)
+
+    stage:
+      "1st" (3.0m): L1+L3 고려, 확률적 선택 (Logit)
+      "2nd" (1.7m): L1만 고려, 확률적 선택
+      "3rd" (1.0m): L1만 고려, 확정적 선택 (최소 비용)
     """
-    utilities = np.full(len(gates), -np.inf)
-    for i, gate in enumerate(gates):
-        dist = np.hypot(agent_pos[0] - gate["x"], agent_pos[1] - gate["y"])
-        if vision_radius is not None and dist > vision_radius:
-            continue
-        utilities[i] = BETA_DIST * dist + BETA_QUEUE * gate_density[i]
+    omega = TEMPERAMENTS[temperament]
+    omega_wait = omega["omega_wait"]
+    omega_walk = omega["omega_walk"]
 
-    if np.all(np.isinf(utilities)):
-        dists = [np.hypot(agent_pos[0] - g["x"], agent_pos[1] - g["y"])
-                 for g in gates]
-        return int(np.argmin(dists))
+    n_gates = len(gates)
+    costs = np.full(n_gates, np.inf)
 
-    # 경로 변경 시: 관성 적용
-    if current_gate is not None:
-        current_u = utilities[current_gate]
-        if not np.isinf(current_u):
-            best_new = np.max(utilities)
-            # 새 게이트 효용이 현재 + 전환비용보다 높아야 변경
-            if best_new <= current_u + C_SWITCH:
-                return current_gate
+    for j, gate in enumerate(gates):
+        # L1: 현재 위치 → 게이트 입구 거리
+        l1 = np.hypot(agent_pos[0] - gate["x"], agent_pos[1] - gate["y"])
+        l1_est = estimate_distance(rng, l1)
 
-    valid = ~np.isinf(utilities)
-    utilities[valid] -= np.max(utilities[valid])
-    exp_u = np.where(valid, np.exp(utilities), 0.0)
-    probs = exp_u / exp_u.sum()
-    return int(np.random.choice(len(gates), p=probs))
+        # 보행시간 계산
+        if stage == "1st":
+            # L3: 게이트 출구 → 다음 목적지 거리
+            exit_x, exit_y = get_exit_position(gate)
+            gate_exit_x = gate["x"] + GATE_LENGTH
+            l3 = np.hypot(gate_exit_x - exit_x, gate["y"] - exit_y)
+            l3_est = estimate_distance(rng, l3)
+            walk_time = (l1_est + l3_est) / agent_speed
+        else:
+            # 2차/3차: 게이트에 가까우므로 L1만 고려 (Gao, 2019 eq.12)
+            walk_time = l1_est / agent_speed
+
+        # 대기시간: 추정 인원 × 평균 서비스 시간 (Gao, 2019 eq.6)
+        n_est = estimate_queue_count(rng, gate_queue[j])
+        wait_time = n_est * SERVICE_TIME_MEAN
+
+        # 총 예상 소요시간 (Gao, 2019 eq.2)
+        costs[j] = omega_wait * wait_time + omega_walk * walk_time
+
+    # 3차 선택: 확정적 (Gao, 2019 eq.13)
+    if stage == "3rd":
+        return int(np.argmin(costs))
+
+    # 1차/2차: 확률적 (Logit, Gao 2019 eq.8)
+    # P_j = exp(-V_j) / Σ exp(-V_k), 비용이 작을수록 선택 확률 높음
+    shifted = costs - np.min(costs)
+    exp_neg = np.exp(-shifted)
+    probs = exp_neg / exp_neg.sum()
+    return int(rng.choice(n_gates, p=probs))
 
 
 # =============================================================================
@@ -260,12 +350,13 @@ def create_simulation():
 # =============================================================================
 def run_simulation():
     print("=" * 60)
-    print("성수역 서쪽 대합실 시뮬레이션 v5 (CFSM V2)")
+    print("성수역 서쪽 대합실 시뮬레이션 v6 (CFSM V2 + Gao LRP)")
     print(f"  열차 간격: {TRAIN_INTERVAL}s, 하차: ~{TRAIN_ALIGHTING}명/회")
-    print(f"  게이트 선택: beta_dist={BETA_DIST}, beta_queue={BETA_QUEUE}")
-    print(f"  전환 비용(C_switch): {C_SWITCH}, Lock-in: {LOCK_IN_DISTANCE}m")
-    print(f"  재평가 주기: {REROUTE_INTERVAL}s")
-    print(f"  서비스시간: lognormal(mu={SERVICE_MU}, sigma={SERVICE_SIGMA})")
+    print(f"  게이트 선택: Gao (2019) LRP 모델")
+    print(f"  3단계 재선택: {CHOICE_DIST_1ST}m / {CHOICE_DIST_2ND}m / {CHOICE_DIST_3RD}m")
+    print(f"  서비스시간(태그): 평균 {SERVICE_TIME_MEAN}s (Gao 실측)")
+    print(f"  태그리스 비율: {TAGLESS_RATIO*100:.0f}%")
+    print(f"  성격 비율: {dict(zip(TEMPERAMENTS.keys(), TEMPERAMENT_RATIO))}")
     print("=" * 60)
 
     (sim, gates, walkable, obstacles, gate_openings,
@@ -273,7 +364,6 @@ def run_simulation():
 
     rng = np.random.default_rng(42)
     total_steps = int(SIM_TIME / DT)
-    reroute_step_interval = int(REROUTE_INTERVAL / DT)
 
     # 도착 스케줄 생성
     arrival_times = generate_arrival_schedule(rng, SIM_TIME)
@@ -289,6 +379,8 @@ def run_simulation():
         "service_times": [],
         "queue_history": [],
         "reroute_count": 0,
+        "temperament_counts": {"adventurous": 0, "conserved": 0, "mild": 0},
+        "tagless_count": 0,
     }
 
     gif_frames = []
@@ -308,9 +400,15 @@ def run_simulation():
             desired_speed = np.clip(
                 rng.normal(PED_SPEED_MEAN, PED_SPEED_STD), 0.5, 2.0)
 
-            gate_density = count_gate_density(sim, gates, agent_data)
-            gate_idx = choose_gate(
-                (spawn_x, spawn_y), gates, gate_density, VISION_RADIUS)
+            # 보행자 속성 결정
+            temperament = assign_temperament(rng)
+            is_tagless = rng.random() < TAGLESS_RATIO
+
+            # 1차 게이트 선택 (Gao LRP)
+            gate_queue = count_gate_queue(sim, gates, agent_data)
+            gate_idx = choose_gate_lrp(
+                rng, (spawn_x, spawn_y), desired_speed, temperament,
+                gates, gate_queue, GATE_X - spawn_x, stage="1st")
 
             try:
                 agent_id = sim.add_agent(
@@ -327,16 +425,21 @@ def run_simulation():
                         range_geometry_repulsion=PED_RANGE_GEOMETRY,
                     )
                 )
-                svc_time = sample_service_time(rng)
+                svc_time = sample_service_time(rng, is_tagless)
                 agent_data[agent_id] = {
                     "gate_idx": gate_idx,
                     "spawn_time": current_time,
                     "service_time": svc_time,
                     "original_speed": desired_speed,
                     "serviced": False,
-                    "locked_in": False,
+                    "is_tagless": is_tagless,
+                    "temperament": temperament,
+                    "choice_stage": 1,  # 현재까지 완료된 선택 단계
                 }
                 spawned_count += 1
+                stats["temperament_counts"][temperament] += 1
+                if is_tagless:
+                    stats["tagless_count"] += 1
             except Exception:
                 pass
             arrival_idx += 1
@@ -358,7 +461,11 @@ def run_simulation():
             # 게이트 구간 안에 있는 에이전트: 서비스 처리
             if GATE_ZONE_X_START <= px <= GATE_ZONE_X_END:
                 if aid not in in_service:
-                    agent.model.desired_speed = 0.3
+                    # 태그리스: 일반 보행속도 유지 / 태그: 게이트 통과 속도
+                    if agent_data[aid]["is_tagless"]:
+                        agent.model.desired_speed = agent_data[aid]["original_speed"]
+                    else:
+                        agent.model.desired_speed = GATE_PASS_SPEED  # 0.65 m/s (Gao 실측)
                     in_service[aid] = {
                         "start": current_time,
                         "duration": agent_data[aid]["service_time"],
@@ -380,50 +487,57 @@ def run_simulation():
             dist_to_gate = GATE_X - px
             if 0 < dist_to_gate < 5.0:
                 agent.model.time_gap = PED_TIME_GAP_QUEUE
-                # 내 게이트가 사용 중이면 → 완전 정지 (이동 욕구 제거)
+                # 내 게이트가 사용 중이면 → 완전 정지
                 if gate_occupied[gi]:
                     agent.model.desired_speed = 0.0
                 else:
                     agent.model.desired_speed = agent_data[aid]["original_speed"]
 
-        # ── 동적 경로 변경 (다단계 의사결정) ──
-        if step % reroute_step_interval == 0 and step > 0:
-            gate_density = count_gate_density(sim, gates, agent_data)
-            for agent in sim.agents():
-                aid = agent.id
-                if aid not in agent_data:
-                    continue
-                if agent_data[aid]["serviced"] or aid in in_service:
-                    continue
-                if agent_data[aid]["locked_in"]:
-                    continue
+        # ── 동적 경로 변경: Gao (2019) 3단계 재선택 ──
+        gate_queue = count_gate_queue(sim, gates, agent_data)
+        for agent in sim.agents():
+            aid = agent.id
+            if aid not in agent_data:
+                continue
+            if agent_data[aid]["serviced"] or aid in in_service:
+                continue
 
-                pos = agent.position
+            pos = agent.position
+            dist_to_gate = GATE_X - pos[0]
 
-                # Lock-in: 게이트 3m 이내 → 경로 변경 비활성화
-                dist_to_gate = GATE_X - pos[0]
-                if dist_to_gate < LOCK_IN_DISTANCE:
-                    agent_data[aid]["locked_in"] = True
-                    continue
+            if dist_to_gate <= 0:
+                continue
 
-                current_gate = agent_data[aid]["gate_idx"]
-                new_gate = choose_gate(
-                    pos, gates, gate_density, VISION_RADIUS,
-                    current_gate=current_gate  # 관성 적용
-                )
+            ad = agent_data[aid]
+            current_stage = ad["choice_stage"]
 
-                if new_gate != current_gate:
-                    try:
-                        sim.switch_agent_journey(
-                            aid, journey_ids[new_gate], approach_wp_ids[new_gate])
-                        agent_data[aid]["gate_idx"] = new_gate
-                        stats["reroute_count"] += 1
-                    except Exception:
-                        pass
+            # 단계 판정: 거리에 따라 재선택 트리거
+            if dist_to_gate <= CHOICE_DIST_3RD and current_stage < 3:
+                stage = "3rd"
+                ad["choice_stage"] = 3
+            elif dist_to_gate <= CHOICE_DIST_2ND and current_stage < 2:
+                stage = "2nd"
+                ad["choice_stage"] = 2
+            else:
+                continue  # 아직 재선택 거리에 도달하지 않음
+
+            current_gate = ad["gate_idx"]
+            new_gate = choose_gate_lrp(
+                rng, pos, ad["original_speed"], ad["temperament"],
+                gates, gate_queue, dist_to_gate, stage=stage)
+
+            if new_gate != current_gate:
+                try:
+                    sim.switch_agent_journey(
+                        aid, journey_ids[new_gate], approach_wp_ids[new_gate])
+                    ad["gate_idx"] = new_gate
+                    stats["reroute_count"] += 1
+                except Exception:
+                    pass
 
         # ── 통계 & 프레임 ──
         if step % int(1.0 / DT) == 0:
-            gd = count_gate_density(sim, gates, agent_data)
+            gd = count_gate_queue(sim, gates, agent_data)
             stats["queue_history"].append((current_time, gd.copy()))
 
         if step % gif_interval == 0:
@@ -441,6 +555,9 @@ def run_simulation():
     total_passed = sum(stats["gate_counts"])
     print(f"\n완료: {spawned_count}명 생성, {total_passed}명 통과, "
           f"{stats['reroute_count']}회 경로변경")
+    print(f"  태그리스: {stats['tagless_count']}명 "
+          f"({stats['tagless_count']/max(spawned_count,1)*100:.1f}%)")
+    print(f"  성격: {stats['temperament_counts']}")
     print("\n게이트별 통과:")
     for i in range(N_GATES):
         print(f"  G{i+1}: {stats['gate_counts'][i]}명")
@@ -541,12 +658,12 @@ def create_snapshots(frames, gates, obstacles, gate_openings):
         axes[idx].set_title(f't = {target_t}s ({len(positions)} agents)',
                             fontsize=12, fontweight='bold')
 
-    fig.suptitle('성수역 서쪽 대합실 시뮬레이션 v5 (군집 도착 + 다단계 의사결정)',
+    fig.suptitle('성수역 서쪽 대합실 시뮬레이션 v6 (Gao LRP + CFSM V2)',
                  fontsize=16, fontweight='bold')
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "snapshots_v5.png", dpi=150, bbox_inches='tight')
+    fig.savefig(OUTPUT_DIR / "snapshots_v6.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_v5.png'}")
+    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_v6.png'}")
 
 
 def create_gif(frames, gates, obstacles, gate_openings):
@@ -570,11 +687,11 @@ def create_gif(frames, gates, obstacles, gate_openings):
     def animate(i):
         t, positions = target_frames[i]
         draw_frame(ax, positions, gates, obstacles, gate_openings, t)
-        ax.set_title(f'성수역 서쪽 v5 | t = {t:.1f}s | {len(positions)} agents',
+        ax.set_title(f'성수역 서쪽 v6 | t = {t:.1f}s | {len(positions)} agents',
                      fontsize=12, fontweight='bold')
 
     anim = FuncAnimation(fig, animate, frames=len(target_frames), interval=200)
-    gif_path = OUTPUT_DIR / "simulation_v5.gif"
+    gif_path = OUTPUT_DIR / "simulation_v6.gif"
     anim.save(str(gif_path), writer=PillowWriter(fps=5), dpi=100)
     plt.close(fig)
     print(f"  GIF: {gif_path}")
@@ -598,13 +715,13 @@ def plot_queue_history(queue_history):
 
     ax.set_xlabel('시간 (초)')
     ax.set_ylabel('게이트 앞 밀도 (명)')
-    ax.set_title('게이트별 대기 밀도 변화 (v5) - 빨간 점선: 열차 도착')
+    ax.set_title('게이트별 대기 밀도 변화 (v6) - 빨간 점선: 열차 도착')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "queue_history_v5.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "queue_history_v6.png", dpi=150)
     plt.close(fig)
-    print(f"  대기열: {OUTPUT_DIR / 'queue_history_v5.png'}")
+    print(f"  대기열: {OUTPUT_DIR / 'queue_history_v6.png'}")
 
 
 def plot_service_time_dist(service_times):
@@ -620,9 +737,9 @@ def plot_service_time_dist(service_times):
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "service_time_v5.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "service_time_v6.png", dpi=150)
     plt.close(fig)
-    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_v5.png'}")
+    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_v6.png'}")
 
 
 if __name__ == "__main__":

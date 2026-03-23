@@ -1,0 +1,209 @@
+# 보행자 미시 시뮬레이션 모델 선정 및 파라미터 설정 보고서
+
+## 1. 시뮬레이션 프레임워크 선정: JuPedSim
+
+### 1.1 JuPedSim 개요
+
+JuPedSim(Juelich Pedestrian Simulator)은 독일 율리히 연구센터(Forschungszentrum Juelich) 시민안전연구소(IAS-7)에서 2010년부터 개발된 오픈소스 미시적(microscopic) 보행자 동역학 시뮬레이션 프레임워크이다 (Kemloh Wagoum et al., 2015). C++ 코어에 Python 바인딩으로 구성되어 있으며, GNU LGPLv3 라이선스로 배포된다.
+
+### 1.2 선정 근거
+
+본 연구에서 JuPedSim을 시뮬레이션 도구로 선정한 근거는 다음과 같다.
+
+**첫째, 오픈소스 기반의 재현성 확보.** JuPedSim은 오픈소스 소프트웨어로서, 시뮬레이션 코드와 파라미터를 완전히 공개할 수 있어 연구의 재현성(reproducibility)을 보장한다. 이는 상용 소프트웨어인 AnyLogic, PTV Vissim 등과 차별화되는 점이다.
+
+**둘째, Python 기반의 유연한 모델 구현.** Python API를 통해 보행자의 게이트 선택 의사결정 모델, 서비스 시간 모델, 동적 경로 변경 로직 등을 연구자가 직접 구현하고 제어할 수 있다. 특히 본 연구의 핵심인 태그리스/태그 사용자 유형 구분, 전용/겸용 게이트 운영 로직 등 기존 상용 소프트웨어에 내장되지 않은 맞춤형 의사결정 모델을 유연하게 구현할 수 있다.
+
+**셋째, 충돌 없는 속도 모델(Collision-Free Speed Model) 지원.** JuPedSim은 좁은 통로 환경에서 안정적인 시뮬레이션이 가능한 CFSM V2 모델을 기본 지원한다. 이는 게이트 통로 폭(0.55m)이 매우 좁은 본 연구의 시뮬레이션 환경에 적합하다 (상세 근거는 2장에서 기술).
+
+**넷째, 에이전트별 개별 파라미터 설정.** CFSM V2 모델에서는 각 에이전트(보행자)마다 보행 속도, 반경, time gap 등의 파라미터를 개별적으로 설정하고, 시뮬레이션 도중에도 동적으로 변경할 수 있다. 이를 통해 게이트 대기열에서의 time gap 감소(바짝 붙어 서는 심리), 서비스 중 속도 감소 등 현실적인 보행 행태를 반영할 수 있다.
+
+### 1.3 주요 상용 도구와의 비교
+
+| 항목 | JuPedSim | AnyLogic | PTV Vissim/Viswalk |
+|------|----------|----------|--------------------|
+| 라이선스 | 오픈소스 (LGPL) | 상용 (학생 PLE 제한적) | 상용 |
+| 스크립팅 | Python | Java | COM API |
+| 보행자 모델 | CFSM V1/V2 | Social Force Model | Social Force Model |
+| 맞춤형 로직 | 완전 자유 | GUI 기반 + Java | 제한적 |
+| 좁은 통로 안정성 | 높음 (CFSM) | 보통 (SFM 진동) | 보통 (SFM 진동) |
+| 코드 재현성 | 완전 공개 | 모델 파일 필요 | 모델 파일 필요 |
+
+선행연구에서는 AnyLogic이 지하철 역사 시뮬레이션에 가장 널리 사용되었으나 (Peng et al., 2024; Nanjing Metro study, 2021), 이는 AnyLogic의 내장 게이트 모듈 때문이다. 본 연구에서는 기존에 없는 태그리스/태그 혼합 운영 의사결정 모델을 새롭게 구현해야 하므로, 코드 수준의 유연성이 높은 JuPedSim이 더 적합하다고 판단하였다.
+
+---
+
+## 2. 보행자 이동 모델 선정: Collision-Free Speed Model V2
+
+### 2.1 Social Force Model의 한계
+
+Social Force Model(SFM; Helbing & Molnar, 1995)은 보행자 시뮬레이션에서 가장 널리 사용되는 모델이나, 좁은 통로 환경에서 다음과 같은 구조적 한계가 보고되었다.
+
+**진동 문제 (Oscillation).** Kretz(2015)는 SFM에서 보행자가 목적지 좌표 주위를 비현실적으로 진동하는 현상을 수학적으로 분석하였다. 일반적 파라미터(이완 시간 τ = 0.4s, 희망 속도 v₀ = 1.5 m/s) 하에서 진폭이 1cm 미만이 되기까지 약 7회 진동(~2.1초)이 필요하며, 이는 좁은 게이트 통로에서 비현실적인 보행 궤적을 유발한다.
+
+**에이전트 겹침 (Overlapping).** SFM은 힘(force) 기반 모델로서, 반발력의 크기가 충분하지 않거나 시간 스텝이 클 경우 보행자 간 물리적 겹침이 발생할 수 있다. 이를 방지하기 위해 반발력을 증가시키면 진동이 심화되는 이중 딜레마(dual dilemma)가 존재한다 (Kretz, 2015).
+
+**좁은 출구에서의 막힘.** 출구 모서리에서 과도한 심리적 힘(psychological force)으로 인해 대피 불가능 현상이 발생할 수 있다. 지하철 게이트 통로 폭(0.55m)은 보행자 직경(~0.45m) 대비 여유가 0.10m에 불과하여, SFM의 이러한 한계가 극대화되는 환경이다.
+
+### 2.2 Collision-Free Speed Model (CFSM) 개요
+
+CFSM은 Tordeux, Chraibi, & Seyfried(2016)가 제안한 속도(velocity) 기반 보행자 이동 모델로, SFM의 구조적 한계를 해결하기 위해 개발되었다. 이후 Xu, Chraibi, Tordeux, & Zhang(2019)에 의해 일반화된 V2 모델이 제안되었다.
+
+### 2.3 CFSM V2 수학적 공식
+
+**속도 방정식:**
+
+각 보행자 i의 이동 속도는 다음과 같이 결정된다.
+
+$$\dot{\mathbf{x}}_i = V_i(s_i) \cdot \mathbf{e}_i$$
+
+여기서 V_i는 속도 함수(optimal velocity function), e_i는 이동 방향 함수이다.
+
+**최적 속도 함수 (Optimal Velocity Function):**
+
+$$V(s) = \min\{v_0, \max\{0, (s - l) / T\}\}$$
+
+- v₀ : 희망 속도 (desired speed, m/s)
+- l : 에이전트 직경 (= 2 × radius, m)
+- T : 시간 간격 (time gap, s) — 안전 차간거리 유지를 위한 최소 시간
+- s : 전방 최근접 이웃까지의 거리 (m)
+
+이 함수의 핵심적 특성은, 전방 이웃과의 거리 s가 에이전트 직경 l 이하가 되면 속도가 자동으로 0이 되어 **충돌이 원천적으로 방지**된다는 점이다.
+
+**방향 함수 (Direction Function):**
+
+$$\mathbf{e}_i = \text{normalize}\left(\mathbf{e}_0 + \sum_{j \in J_i} R_n(s_{ij}) \cdot \mathbf{n}_{ij} + R_g(s_{iw}) \cdot \mathbf{n}_{iw}\right)$$
+
+- e₀ : 목적지 방향 (desired direction)
+- R_n : 이웃 보행자 반발 함수
+- R_g : 벽/기하구조 반발 함수
+- n_ij, n_iw : 이웃/벽으로부터의 단위 법선 벡터
+
+**반발 함수 (Repulsion Function):**
+
+$$R(s) = a \cdot \exp\left(\frac{l - s}{D}\right)$$
+
+- a : 반발 강도 (strength)
+- D : 반발 범위 (range) — 반발력이 유효한 거리 척도
+
+### 2.4 SFM 대비 CFSM의 구조적 차이
+
+| 특성 | SFM (Helbing, 1995) | CFSM V2 (Xu et al., 2019) |
+|------|---------------------|---------------------------|
+| 기본 접근 | 뉴턴 역학 (F = ma) | 1차 속도 방정식 |
+| 상호작용 | 반발력(force) | 방향 편향(deflection) |
+| 충돌 처리 | 사후 반발 (겹침 발생 가능) | 사전 방지 (속도 → 0) |
+| 진동 | 발생 (Kretz, 2015) | 발생하지 않음 |
+| 계산 비용 | 2차 미분방정식 (높음) | 1차 방정식 (낮음) |
+| 좁은 통로 | 불안정 | 안정적 |
+| 파라미터 해석 | 사회적 힘 (추상적) | 물리적 관측량 (직관적) |
+
+### 2.5 V1 대비 V2의 개선점
+
+CFSM V2 (Xu et al., 2019)는 V1 대비 다음과 같은 개선이 이루어졌다.
+
+1. **벽면 반발력 통합**: V1에서는 이웃 보행자 반발만 고려하였으나, V2에서는 벽/기하구조의 반발력을 모델에 통합하여 벽면 근처에서의 보행 행태를 현실적으로 반영한다.
+2. **에이전트별 개별 파라미터**: V1은 전역(global) 파라미터만 지원하였으나, V2는 각 에이전트마다 보행 속도, 반경, time gap, 반발 강도/범위를 개별 설정하고 시뮬레이션 도중 동적으로 변경할 수 있다.
+3. **방향 함수 개선**: 보행자 방향 전환 시 더 부드러운 변화를 제공하여 비현실적 후진을 감소시켰다.
+
+본 연구에서는 게이트 대기열에서의 time gap 동적 변경(대기 시 바짝 붙어 서는 심리 반영), 서비스 중 속도 감소 등 **에이전트별 파라미터 동적 제어**가 필수적이므로 V2 모델을 채택하였다.
+
+### 2.6 본 연구에서의 CFSM V2 선정 근거 요약
+
+1. 게이트 통로 폭(0.55m)이 보행자 직경(~0.45m) 대비 극히 좁아 SFM의 진동·겹침 문제가 심각하게 발생하는 환경이다.
+2. CFSM V2는 속도 기반 모델로 충돌을 원천 방지하므로, 좁은 게이트 통로에서도 안정적인 시뮬레이션이 가능하다.
+3. 에이전트별 파라미터 동적 제어를 통해 대기열 행태(time gap 감소), 서비스 시간 모델(속도 감소), 태그리스/태그 사용자 유형별 차별화된 행태를 구현할 수 있다.
+4. 파라미터가 물리적으로 관측 가능한 양(보행 속도, 보행자 반경, 시간 간격)으로 구성되어, 선행연구 실측 데이터와의 대응이 용이하다.
+
+---
+
+## 3. 핵심 파라미터 설정
+
+### 3.1 보행자 물리 파라미터
+
+| 파라미터 | 기호 | 설정값 | 출처 |
+|---------|------|--------|------|
+| 보행자 반경 | r | 0.225 m | Weidmann (1993) |
+| 희망 보행 속도 | v₀ | N(1.34, 0.26) m/s | Weidmann (1993) |
+| 속도 범위 | - | 0.5 ~ 2.0 m/s (clip) | - |
+
+**Weidmann(1993)** 은 ETH Zurich에서 발표된 보행자 교통공학 분야의 기초 문헌으로, 비혼잡 상태의 자유보행속도(free-flow speed) 분포를 정규분포 N(1.34, 0.26) m/s로 제시하였다. 보행자 시뮬레이션 분야에서 가장 널리 인용되는 보행 속도 파라미터 출처이며, JuPedSim의 공식 예제에서도 이 값을 기본으로 사용한다.
+
+보행자 반경 0.225m(직경 0.45m)는 성인 어깨폭의 절반에 해당하며, 게이트 통로 폭(0.55m) 대비 양측 0.05m의 여유를 제공한다.
+
+### 3.2 이동 모델 파라미터
+
+| 파라미터 | 기호 | 설정값 | 출처 |
+|---------|------|--------|------|
+| 시간 간격 (일반) | T | 1.06 s | Tordeux et al. (2016) |
+| 시간 간격 (대기열) | T_q | 0.50 s | 본 연구 설정 |
+| 이웃 반발 강도 | a_n | 8.0 | Tordeux et al. (2016) |
+| 이웃 반발 범위 | D_n | 0.1 m | Tordeux et al. (2016) |
+| 벽면 반발 강도 | a_g | 5.0 | Tordeux et al. (2016) |
+| 벽면 반발 범위 | D_g | 0.02 m | Tordeux et al. (2016) |
+
+**시간 간격(time gap) T = 1.06s** 는 Tordeux et al.(2016)이 보행자 추종(follow-the-leader) 실험 데이터에서 속도-간격 간의 선형 관계를 분석하여 도출한 경험적 값이다. 이는 보행자가 전방 보행자와 안전 거리를 유지하기 위한 최소 시간 간격을 의미한다. 최적 속도 함수 V(s) = (s - l) / T 에서 T 값에 해당한다.
+
+**대기열 시간 간격 T_q = 0.50s** 는 게이트 앞 대기열에서 보행자가 일반 보행 시보다 전방 보행자에 바짝 붙어 서는 심리를 반영한 본 연구의 설정값이다. 대기열 상황에서는 이동 속도가 낮고 정지에 가까우므로, 안전 거리 요구가 감소한다.
+
+**이웃 반발 강도 a_n = 8.0, 범위 D_n = 0.1m** 는 반발 함수 R(s) = 8.0 × exp((l - s) / 0.1)로, 이웃 보행자가 10cm 이내로 접근할 때 반발이 급격히 증가하는 특성을 가진다. Tordeux et al.(2016) 원논문에서 실험 데이터 기반으로 캘리브레이션된 값이다.
+
+**벽면 반발 강도 a_g = 5.0, 범위 D_g = 0.02m** 는 벽면 2cm 이내에서 강한 반발이 작용하도록 설정된 값으로, 보행자가 벽면에 밀착하지 않는 현실적 행태를 반영한다.
+
+### 3.3 게이트 선택 의사결정 파라미터
+
+| 파라미터 | 기호 | 설정값 | 출처 |
+|---------|------|--------|------|
+| 거리 민감도 | β_dist | -0.25 | Haghani & Sarvi (2017) 범위 내 |
+| 대기열 민감도 | β_queue | -0.30 | Haghani & Sarvi (2017) 범위 내 |
+| 시야 반경 | R_v | 8.0 m | 본 연구 설정 |
+| 전환 비용 (관성) | C_switch | 1.5 | 본 연구 설정 |
+| Lock-in 거리 | d_lock | 3.0 m | 본 연구 설정 |
+| 재평가 주기 | Δt_re | 3.0 s | 본 연구 설정 |
+
+**게이트 선택 효용함수:**
+
+$$U(i) = \beta_{dist} \times d_i + \beta_{queue} \times q_i$$
+
+- d_i : 보행자에서 게이트 i까지의 유클리드 거리 (m)
+- q_i : 게이트 i에 배정된 현재 대기 인원 (명)
+
+Haghani & Sarvi(2017)는 멜버른 주요 철도역에서 승객 면접 조사(stated preference) 및 현장 관측(revealed preference) 데이터를 기반으로 혼합 네스티드 로짓 모델(Mixed Nested Logit Model)을 추정하였다. 출구 선택에 영향을 미치는 주요 요인으로 공간적 거리(distance)와 혼잡도(congestion/queue)를 확인하였으며, 본 연구의 β_dist = -0.25, β_queue = -0.30은 해당 연구에서 보고된 파라미터 범위(β_dist: -0.21 ~ -0.31, β_queue: -0.14 ~ -0.60) 내의 값이다.
+
+**다단계 의사결정 모델:**
+
+게이트 선택 후 비현실적인 핑퐁 효과(반복적 경로 변경)를 방지하기 위해 다음 세 가지 메커니즘을 적용한다.
+
+1. **관성(Inertia)**: 새 게이트의 효용이 현재 게이트 효용 + 전환 비용(C_switch = 1.5)을 초과해야 경로 변경을 실행한다.
+2. **Lock-in**: 게이트까지 거리가 3.0m 이내이면 경로 변경을 비활성화한다.
+3. **재평가 주기**: 경로 재평가를 3.0초 간격으로 제한하여 과도한 경로 변경을 방지한다.
+
+### 3.4 서비스 시간 파라미터
+
+| 유형 | 분포 | 파라미터 | 범위 | 비고 |
+|------|------|---------|------|------|
+| 태그 (교통카드) | 로그정규분포 | μ=0.35, σ=0.35 | 0.8~5.0초 | 접근+태핑+통과 |
+| 태그리스 | - | ~0초 | 0~0.3초 | 무정지 통과 |
+
+태그 사용자의 서비스 시간은 로그정규분포로 모델링하였다. 로그정규분포는 서비스 시간의 비대칭성(대부분 빠르게 통과하나, 소수가 카드 인식 실패 등으로 지체)을 반영하는 데 적합하다. 하한(0.8초)은 카드 태핑의 최소 물리적 시간, 상한(5.0초)은 카드 인식 실패나 잔액 부족 등 이상 상황을 반영한다.
+
+### 3.5 도착 모델 파라미터
+
+| 파라미터 | 설정값 | 근거 |
+|---------|--------|------|
+| 열차 도착 간격 | 180초 | 서울 2호선 피크시 배차 간격 (~2.5~3분) |
+| 1회 하차 인원 | Poisson(λ=40) | 서쪽 계단 이용분 추정 |
+| 계단 진입 분산 | N(7.5, 3.75)초 | 15초에 걸쳐 분산 도착 |
+
+---
+
+## 참고문헌
+
+- Haghani, M. & Sarvi, M. (2017). Stated and revealed exit choices of pedestrian crowd evacuees. *Transportation Research Part B: Methodological*, 106, 410-427.
+- Helbing, D. & Molnar, P. (1995). Social Force Model for Pedestrian Dynamics. *Physical Review E*, 51(5), 4282-4286.
+- Kemloh Wagoum, A.U., Chraibi, M., & Zhang, J. (2015). JuPedSim: an open framework for simulating and analyzing the dynamics of pedestrians. *3rd Conference of Transportation Research Group of India*.
+- Kretz, T. (2015). On Oscillations in the Social Force Model. *Physica A*, 438, 272-285.
+- Peng, J., Wei, Z., Li, J., Guo, X., & Wang, S. (2024). Passenger Flow Bottleneck Decongestion in Subway Stations: A Simulation Study. *SIMULATION* (SAGE).
+- Tordeux, A., Chraibi, M., & Seyfried, A. (2016). Collision-Free Speed Model for Pedestrian Dynamics. In: *Traffic and Granular Flow '15*, pp. 225-232. Springer.
+- Weidmann, U. (1993). Transporttechnik der Fussgaenger. *Schriftenreihe des IVT Nr. 90*, ETH Zuerich.
+- Xu, Q., Chraibi, M., Tordeux, A., & Zhang, J. (2019). Generalized collision-free velocity model for pedestrian dynamics. *Physica A*, 535, 122521.
