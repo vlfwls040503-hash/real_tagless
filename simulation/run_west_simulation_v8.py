@@ -2,20 +2,29 @@
 성수역 서쪽 대합실 보행자 시뮬레이션 v8
 
 v7 → v8 변경:
-  1. 물리 엔진: CFSM V2 → GCFM (Generalized Centrifugal Force Model)
-     - 타원형 보행자 (속도에 따라 어깨축 축소) → 좁은 통로 적합
-     - Chraibi et al. (2010), JuPedSim 자체 개발팀 모델
-  2. 게이트 통과: 물리 연산 → Queueing Service Node
-     - 개찰구를 '물리적 공간'이 아닌 '대기열 서비스 노드'로 취급
-     - 게이트 도착 → 정지(물리 정지) → 서비스 시간 대기 → 텔레포트(출구측)
-     - 배리어와 물리적 상호작용 제로 → 타임아웃/끼임 원천 제거
+  물리 엔진: CFSM V2 → GCFM (Generalized Centrifugal Force Model)
+  - 타원형 보행자 (속도에 따라 어깨축 축소) → 좁은 게이트 접근 시 자연스러운 체형 변화
+  - Chraibi et al. (2010), JuPedSim 자체 개발팀 모델
+
+  게이트 통과 메커니즘:
+  - GCFM 기하구조에는 배리어 미포함 (힘 기반 모델의 얇은 벽 관통 방지)
+  - 게이트 통과는 waypoint + 속도 제어로 구현:
+    1. 에이전트가 게이트 입구 waypoint 도달
+    2. 게이트 점유 중이면 대기 (극저속)
+    3. 비어있으면 서비스 속도(0.65 m/s)로 감속하며 게이트 통과
+    4. 서비스 시간 만료 → 속도 복원 → 출구 이동
+  - 물리적으로 게이트 공간을 걸어서 통과 (텔레포트 아님)
+
+  기존 유지:
+  - 게이트 선택: Gao et al. (2019) LRP 모델 (3단계 재선택)
+  - 대기열: Leader-Follower, 게이트 점유 시 대기
+  - 서비스 시간: Gao (2019) 실측 기반 lognormal
 
 논문 프레이밍:
-  - 의사결정(전략): Gao et al. (2019) LRP 모델 (게이트 선택)
-  - 물리적 보행(전술): GCFM (협소 공간 특화 타원형 모델)
-  - 개찰구 서비스: Hybrid Continuous-Queueing (물리-큐 하이브리드)
-
-모델: GeneralizedCentrifugalForceModel (GCFM, Chraibi et al. 2010)
+  - 전략(의사결정): Gao et al. (2019) LRP 모델
+  - 전술(물리적 보행): GCFM (Chraibi et al., 2010)
+    - Gao (2019)의 SFM(원형)보다 타원형 body → 협소 공간 접근 시 현실적 회피
+  - 게이트 통과: Gao (2019) 서비스 시간 모델 + 속도 제어
 """
 
 import jupedsim as jps
@@ -55,26 +64,24 @@ PLATOON_SPREAD = 15.0
 FIRST_TRAIN_TIME = 5.0
 
 # =============================================================================
-# GCFM 파라미터 (Chraibi et al. 2010)
+# SFM 파라미터 (Helbing & Molnar 1995, Helbing et al. 2000)
 # =============================================================================
-PED_SPEED_MEAN = 1.34          # Weidmann 1993
+PED_SPEED_MEAN = 1.34
 PED_SPEED_STD = 0.26
-PED_SPEED_MIN = 0.8            # Gao 실측 하한
-PED_SPEED_MAX = 1.5            # Gao 실측 상한
+PED_SPEED_MIN = 0.8
+PED_SPEED_MAX = 1.5
 
-# GCFM 에이전트 파라미터
-GCFM_MASS = 1.0
-GCFM_TAU = 0.5                 # 가속 시정수 (초)
-GCFM_A_V = 1.0                 # 타원 이동방향 스트레치
-GCFM_A_MIN = 0.2               # 이동방향 최소 반축
-GCFM_B_MIN = 0.2               # 어깨방향 최소 반축 (좁은 통로용)
-GCFM_B_MAX = 0.4               # 어깨방향 최대 반축 (정지 시)
+# SFM 모델 파라미터 (Helbing et al. 2000)
+SFM_BODY_FORCE = 120000.0    # 접촉 시 body force (N)
+SFM_FRICTION = 240000.0       # 접촉 시 마찰력 (N)
 
-# GCFM 모델 파라미터
-GCFM_STRENGTH_NEIGHBOR = 0.3
-GCFM_STRENGTH_GEOMETRY = 0.2
-GCFM_MAX_NEIGHBOR_DIST = 2.0
-GCFM_MAX_GEOMETRY_DIST = 2.0
+# SFM 에이전트 파라미터
+SFM_MASS = 80.0               # 체중 (kg)
+SFM_REACTION_TIME = 0.5       # 반응 시간 (s)
+SFM_AGENT_SCALE = 2000.0      # 에이전트 간 사회력 강도
+SFM_OBSTACLE_SCALE = 2000.0   # 장애물 사회력 강도
+SFM_FORCE_DISTANCE = 0.08     # 사회력 감쇠 거리 (m)
+SFM_RADIUS = 0.2              # 보행자 반경 (m) - Gao (2019) 0.225m 참조
 
 # =============================================================================
 # 서비스 시간 파라미터 (Gao et al., 2019)
@@ -104,25 +111,22 @@ CHOICE_DIST_1ST = 3.0
 CHOICE_DIST_2ND = 1.7
 CHOICE_DIST_3RD = 1.0
 
-# =============================================================================
-# Queueing Service Node 파라미터
-# =============================================================================
-# 큐 포인트: 배리어 2m 전 (물리적 접촉 없는 안전 거리)
-QUEUE_POINT_X = GATE_X - 2.0     # x=10.0
-# 텔레포트 도착점: 배리어 출구 + 0.5m
-TELEPORT_X = GATE_X + GATE_LENGTH + 0.5  # x=14.0
-# 큐 진입 판정 거리
-QUEUE_ENTER_DIST = 0.5  # 큐 포인트 ± 0.5m 이내 도달 시 진입
+# 게이트 통과 구간
+GATE_ZONE_X_START = GATE_X - 0.3
+GATE_ZONE_X_END = GATE_X + GATE_LENGTH + 0.3
 
-# 대기열 최대 길이 (게이트 방향으로 줄 서는 간격)
-QUEUE_SPACING = 0.7     # 대기자 간 간격 (m)
+# 대기열 제어
+QUEUE_STOP_DIST = 0.5
+QUEUE_FOLLOW_DIST = 5.0
+LEADER_FOLLOW_GAP = 0.6
+QUEUE_MIN_SPEED = 0.05   # GCFM: 완전 정지 대신 극저속 (벽 반발 유지)
 
 OUTPUT_DIR = pathlib.Path(__file__).parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 # =============================================================================
-# 유틸 함수 (v7에서 재사용)
+# 유틸 함수
 # =============================================================================
 def generate_arrival_schedule(rng, sim_time):
     arrivals = []
@@ -153,6 +157,29 @@ def sample_service_time(rng, is_tagless=False):
     return np.clip(rng.lognormal(mu_ln, sigma_ln), SERVICE_TIME_MIN, SERVICE_TIME_MAX)
 
 
+def count_gate_queue(sim, gates, agent_data):
+    queue = [0] * len(gates)
+    for agent in sim.agents():
+        aid = agent.id
+        if aid not in agent_data:
+            continue
+        if agent_data[aid]["serviced"]:
+            continue
+        gi = agent_data[aid].get("gate_idx", -1)
+        if gi >= 0:
+            queue[gi] += 1
+    return queue
+
+
+def estimate_queue_count(rng, actual_count):
+    if actual_count <= 3:
+        return actual_count
+    elif actual_count <= 5:
+        return actual_count + rng.choice([-1, 0, 1])
+    else:
+        return max(0, actual_count + rng.choice([-2, -1, 0, 1, 2]))
+
+
 def estimate_distances_with_order_preservation(rng, actual_dists):
     n = len(actual_dists)
     estimated = np.zeros(n)
@@ -172,15 +199,6 @@ def estimate_distances_with_order_preservation(rng, actual_dists):
         est = np.clip(est, low[i], high[i])
         estimated[sorted_indices[i]] = est
     return estimated
-
-
-def estimate_queue_count(rng, actual_count):
-    if actual_count <= 3:
-        return actual_count
-    elif actual_count <= 5:
-        return actual_count + rng.choice([-1, 0, 1])
-    else:
-        return max(0, actual_count + rng.choice([-2, -1, 0, 1, 2]))
 
 
 def get_exit_position(gate):
@@ -238,39 +256,63 @@ def choose_gate_lrp(rng, agent_pos, agent_speed, temperament, gates,
     return int(rng.choice(n_gates, p=probs))
 
 
+def find_leader(agent_pos, gate_idx, sim, agent_data, in_service, my_id):
+    my_x = agent_pos[0]
+    best_x = None
+    best_pos = None
+    for agent in sim.agents():
+        aid = agent.id
+        if aid == my_id or aid not in agent_data:
+            continue
+        ad = agent_data[aid]
+        if ad.get("gate_idx") != gate_idx or ad["serviced"]:
+            continue
+        ox, oy = agent.position
+        if ox > my_x:
+            if best_x is None or ox < best_x:
+                best_x = ox
+                best_pos = (ox, oy)
+    return best_pos
+
+
 # =============================================================================
-# 시뮬레이션 생성 (GCFM + 배리어 없는 기하구조)
+# 시뮬레이션 생성 (GCFM, 배리어 없는 기하구조)
 # =============================================================================
 def create_simulation():
     gates = calculate_gate_positions()
 
-    # 시뮬레이션 기하구조: 배리어 없음 (Queueing Node가 대체)
-    # 보행자는 배리어에 물리적으로 접촉하지 않음
+    # GCFM 기하구조: 배리어 미포함
+    # (힘 기반 모델은 얇은 배리어 벽 관통 → 외곽 벽 + 구조물만 포함)
+    # 게이트 통과는 waypoint + 속도 제어로 구현
     walkable, _, _ = build_geometry(gates, include_barrier=False)
     # 시각화용: 배리어 포함
     _, vis_obstacles, gate_openings = build_geometry(gates, include_barrier=True)
 
-    model = jps.GeneralizedCentrifugalForceModel(
-        strength_neighbor_repulsion=GCFM_STRENGTH_NEIGHBOR,
-        strength_geometry_repulsion=GCFM_STRENGTH_GEOMETRY,
-        max_neighbor_interaction_distance=GCFM_MAX_NEIGHBOR_DIST,
-        max_geometry_interaction_distance=GCFM_MAX_GEOMETRY_DIST,
+    model = jps.SocialForceModel(
+        body_force=SFM_BODY_FORCE,
+        friction=SFM_FRICTION,
     )
 
     sim = jps.Simulation(model=model, geometry=walkable, dt=DT)
 
     gate_x_end = GATE_X + GATE_LENGTH
 
-    # 큐 포인트 Waypoint (배리어 2m 전)
-    queue_wp_ids = []
+    # 1단계: 접근 Waypoint (게이트 전방)
+    approach_wp_ids = []
     for g in gates:
-        wp_id = sim.add_waypoint_stage((QUEUE_POINT_X, g["y"]), QUEUE_ENTER_DIST)
-        queue_wp_ids.append(wp_id)
+        wp_id = sim.add_waypoint_stage((8.0, g["y"]), 1.0)
+        approach_wp_ids.append(wp_id)
 
-    # 텔레포트 후 Waypoint (배리어 출구측)
+    # 2단계: 게이트 입구 Waypoint
+    gate_wp_ids = []
+    for g in gates:
+        wp_id = sim.add_waypoint_stage((GATE_X, g["y"]), 0.4)
+        gate_wp_ids.append(wp_id)
+
+    # 3단계: 게이트 출구 Waypoint (에이전트가 물리적으로 통과하는 지점)
     post_gate_wp_ids = []
     for g in gates:
-        wp_id = sim.add_waypoint_stage((TELEPORT_X + 1.0, g["y"]), 2.0)
+        wp_id = sim.add_waypoint_stage((gate_x_end + 1.0, g["y"]), 1.5)
         post_gate_wp_ids.append(wp_id)
 
     # 출구
@@ -287,48 +329,34 @@ def create_simulation():
         (EXITS[1]["x_start"], EXITS[1]["y"] + 0.5),
     ]))
 
-    # Journey: 큐 포인트 → (텔레포트) → 출구
-    # 스폰 시에는 큐 포인트를 목표로 이동
-    # 텔레포트 후에는 새 에이전트가 post_gate → exit journey로 생성
-    pre_gate_journey_ids = []
-    for i, g in enumerate(gates):
-        journey = jps.JourneyDescription([queue_wp_ids[i]])
-        jid = sim.add_journey(journey)
-        pre_gate_journey_ids.append(jid)
-
-    post_gate_journey_ids = []
+    # 게이트별 Journey: approach → gate → post_gate → exit
+    journey_ids = []
     for i, g in enumerate(gates):
         target_exit = exit_upper if g["y"] > CONCOURSE_WIDTH / 2 else exit_lower
-        journey = jps.JourneyDescription([post_gate_wp_ids[i], target_exit])
+        journey = jps.JourneyDescription([
+            approach_wp_ids[i], gate_wp_ids[i],
+            post_gate_wp_ids[i], exit_upper, exit_lower
+        ])
+        journey.set_transition_for_stage(
+            approach_wp_ids[i],
+            jps.Transition.create_fixed_transition(gate_wp_ids[i]))
+        journey.set_transition_for_stage(
+            gate_wp_ids[i],
+            jps.Transition.create_fixed_transition(post_gate_wp_ids[i]))
         journey.set_transition_for_stage(
             post_gate_wp_ids[i],
             jps.Transition.create_fixed_transition(target_exit))
         jid = sim.add_journey(journey)
-        post_gate_journey_ids.append(jid)
+        journey_ids.append(jid)
 
-    # 글로벌 경로 (게이트 미배정 시 중앙 게이트 방향)
     mid_gate = N_GATES // 2
-    default_journey_id = pre_gate_journey_ids[mid_gate]
-    default_stage_id = queue_wp_ids[mid_gate]
+    default_journey_id = journey_ids[mid_gate]
+    default_stage_id = approach_wp_ids[mid_gate]
 
     return (sim, gates, walkable, vis_obstacles, gate_openings,
-            queue_wp_ids, post_gate_wp_ids,
-            pre_gate_journey_ids, post_gate_journey_ids,
+            approach_wp_ids, gate_wp_ids, post_gate_wp_ids, journey_ids,
             default_journey_id, default_stage_id,
             exit_upper, exit_lower)
-
-
-# =============================================================================
-# 대기열 관리
-# =============================================================================
-def count_gate_queue(gate_queues):
-    """각 게이트의 대기 인원 수 반환"""
-    return [len(q) for q in gate_queues]
-
-
-def get_queue_position(gate, queue_rank):
-    """대기열에서 rank번째 위치 계산 (0=맨 앞, 1=두번째, ...)"""
-    return (QUEUE_POINT_X - queue_rank * QUEUE_SPACING, gate["y"])
 
 
 # =============================================================================
@@ -336,19 +364,19 @@ def get_queue_position(gate, queue_rank):
 # =============================================================================
 def run_simulation():
     print("=" * 60)
-    print("성수역 서쪽 대합실 시뮬레이션 v8 (GCFM + Queueing Service Node)")
-    print(f"  물리 엔진: GCFM (Chraibi et al. 2010)")
-    print(f"  게이트 통과: Queueing Service Node (텔레포트)")
+    print("성수역 서쪽 대합실 시뮬레이션 v8 (SFM)")
+    print(f"  물리 엔진: SFM (Helbing et al. 2000, 접촉력 모델)")
+    print(f"  게이트 통과: waypoint 기반 속도 제어 (물리적 통과)")
     print(f"  게이트 선택: Gao (2019) LRP 모델")
     print(f"  3단계 재선택: {CHOICE_DIST_1ST}m / {CHOICE_DIST_2ND}m / {CHOICE_DIST_3RD}m")
     print(f"  서비스시간(태그): 평균 {SERVICE_TIME_MEAN}s")
     print(f"  태그리스 비율: {TAGLESS_RATIO*100:.0f}%")
     print(f"  희망속도: N({PED_SPEED_MEAN}, {PED_SPEED_STD})")
+    print(f"  SFM: radius={SFM_RADIUS}m, body_force={SFM_BODY_FORCE}, friction={SFM_FRICTION}")
     print("=" * 60)
 
     (sim, gates, walkable, obstacles, gate_openings,
-     queue_wp_ids, post_gate_wp_ids,
-     pre_gate_journey_ids, post_gate_journey_ids,
+     approach_wp_ids, gate_wp_ids, post_gate_wp_ids, journey_ids,
      default_journey_id, default_stage_id,
      exit_upper, exit_lower) = create_simulation()
 
@@ -359,11 +387,8 @@ def run_simulation():
     arrival_idx = 0
     print(f"  도착 스케줄: {len(arrival_times)}명 예정")
 
-    agent_data = {}        # aid → agent 속성
-    gate_queues = [[] for _ in range(N_GATES)]  # 각 게이트의 대기열 (aid 리스트)
-    in_service = {}        # aid → {"start": t, "duration": d, "gate_idx": gi}
-    gate_occupied = [False] * N_GATES  # 현재 서비스 중인 게이트
-    pending_teleport = []  # 텔레포트 대기 (다음 스텝에서 처리)
+    agent_data = {}
+    in_service = {}
     spawned_count = 0
 
     stats = {
@@ -384,40 +409,7 @@ def run_simulation():
     for step in range(total_steps):
         current_time = step * DT
 
-        # ── 텔레포트 처리: 이전 스텝에서 제거된 에이전트를 출구측에 재생성 ──
-        new_teleports = []
-        for tp in pending_teleport:
-            tp_gate = tp["gate_idx"]
-            tp_pos = (TELEPORT_X, gates[tp_gate]["y"])
-            try:
-                new_aid = sim.add_agent(
-                    jps.GeneralizedCentrifugalForceModelAgentParameters(
-                        journey_id=post_gate_journey_ids[tp_gate],
-                        stage_id=post_gate_wp_ids[tp_gate],
-                        position=tp_pos,
-                        desired_speed=tp["original_speed"],
-                        mass=GCFM_MASS, tau=GCFM_TAU,
-                        a_v=GCFM_A_V, a_min=GCFM_A_MIN,
-                        b_min=GCFM_B_MIN, b_max=GCFM_B_MAX,
-                    ))
-                # 새 에이전트 데이터 등록 (통과 완료 상태)
-                agent_data[new_aid] = {
-                    "gate_idx": tp_gate,
-                    "spawn_time": tp["spawn_time"],
-                    "service_time": tp["service_time"],
-                    "original_speed": tp["original_speed"],
-                    "serviced": True,
-                    "is_tagless": tp["is_tagless"],
-                    "temperament": tp["temperament"],
-                    "choice_stage": 99,  # 완료
-                    "state": "done",
-                    "in_queue": False,
-                }
-            except Exception:
-                pass
-        pending_teleport.clear()
-
-        # ── 보행자 생성 (군집 도착) ──
+        # ── 보행자 생성 ──
         while (arrival_idx < len(arrival_times) and
                arrival_times[arrival_idx] <= current_time):
             stair = STAIRS[rng.integers(0, len(STAIRS))]
@@ -428,26 +420,24 @@ def run_simulation():
             temperament = assign_temperament(rng)
             is_tagless = rng.random() < TAGLESS_RATIO
 
-            # 스폰 시도 (겹침 시 위치 변경하여 재시도)
             spawned = False
             for retry in range(5):
-                spawn_x = stair["x"] + rng.uniform(0.3, 2.0)
+                spawn_x = stair["x"] + rng.uniform(0.5, 2.5)
                 spawn_y = rng.uniform(stair["y_start"], stair["y_end"])
                 if retry > 0:
-                    # 재시도: y 범위 확장
+                    spawn_x += rng.uniform(0.5, 2.0)
                     spawn_y += rng.uniform(-1.0, 1.0)
-                    spawn_y = np.clip(spawn_y, 1.0, NOTCH_Y - 1.0)
+                    spawn_y = np.clip(spawn_y, 2.0, NOTCH_Y - 2.0)
 
-                dist_to_queue = QUEUE_POINT_X - spawn_x
-
-                if dist_to_queue <= CHOICE_DIST_1ST:
-                    gq = count_gate_queue(gate_queues)
+                dist_to_gate = GATE_X - spawn_x
+                if dist_to_gate <= CHOICE_DIST_1ST:
+                    gate_queue = count_gate_queue(sim, gates, agent_data)
                     gate_idx = choose_gate_lrp(
                         rng, (spawn_x, spawn_y), desired_speed, temperament,
-                        gates, gq, stage="1st")
+                        gates, gate_queue, stage="1st")
                     choice_stage = 1
-                    jid = pre_gate_journey_ids[gate_idx]
-                    sid = queue_wp_ids[gate_idx]
+                    jid = journey_ids[gate_idx]
+                    sid = approach_wp_ids[gate_idx]
                 else:
                     gate_idx = -1
                     choice_stage = 0
@@ -456,14 +446,17 @@ def run_simulation():
 
                 try:
                     agent_id = sim.add_agent(
-                        jps.GeneralizedCentrifugalForceModelAgentParameters(
+                        jps.SocialForceModelAgentParameters(
                             journey_id=jid,
                             stage_id=sid,
                             position=(spawn_x, spawn_y),
                             desired_speed=desired_speed,
-                            mass=GCFM_MASS, tau=GCFM_TAU,
-                            a_v=GCFM_A_V, a_min=GCFM_A_MIN,
-                            b_min=GCFM_B_MIN, b_max=GCFM_B_MAX,
+                            mass=SFM_MASS,
+                            reaction_time=SFM_REACTION_TIME,
+                            agent_scale=SFM_AGENT_SCALE,
+                            obstacle_scale=SFM_OBSTACLE_SCALE,
+                            force_distance=SFM_FORCE_DISTANCE,
+                            radius=SFM_RADIUS,
                         ))
                     agent_data[agent_id] = {
                         "gate_idx": gate_idx,
@@ -474,8 +467,7 @@ def run_simulation():
                         "is_tagless": is_tagless,
                         "temperament": temperament,
                         "choice_stage": choice_stage,
-                        "state": "walking",
-                        "in_queue": False,
+                        "state": "flowing",
                     }
                     spawned_count += 1
                     stats["temperament_counts"][temperament] += 1
@@ -487,73 +479,74 @@ def run_simulation():
                     continue
 
             if not spawned:
-                # 지연 생성: 다음 스텝으로 미룸
                 arrival_times.insert(arrival_idx + 1, current_time + DT * 2)
 
             arrival_idx += 1
 
-        # ── 서비스 완료 → 텔레포트 예약 ──
+        # ── 게이트 점유 상태 ──
+        gate_occupied = [False] * N_GATES
+        for aid_s in in_service:
+            gi = agent_data[aid_s]["gate_idx"]
+            if gi >= 0:
+                gate_occupied[gi] = True
+
+        # ── 서비스 완료 체크 (위치 무관) ──
         finished_aids = []
         for aid_s, svc in in_service.items():
-            elapsed = current_time - svc["start"]
-            if elapsed >= svc["duration"]:
+            if current_time - svc["start"] >= svc["duration"]:
                 finished_aids.append(aid_s)
-
         for aid_s in finished_aids:
-            svc = in_service[aid_s]
-            gi = svc["gate_idx"]
-            ad = agent_data[aid_s]
-
-            stats["gate_counts"][gi] += 1
-            stats["service_times"].append(svc["duration"])
-            gate_occupied[gi] = False
-
-            # 에이전트 제거 → 다음 스텝에서 텔레포트
-            sim.mark_agent_for_removal(aid_s)
-            pending_teleport.append({
-                "gate_idx": gi,
-                "spawn_time": ad["spawn_time"],
-                "service_time": ad["service_time"],
-                "original_speed": ad["original_speed"],
-                "is_tagless": ad["is_tagless"],
-                "temperament": ad["temperament"],
-            })
-
-            # 대기열에서 제거
-            if aid_s in gate_queues[gi]:
-                gate_queues[gi].remove(aid_s)
-
+            if aid_s in agent_data:
+                ad_s = agent_data[aid_s]
+                gi_s = ad_s["gate_idx"]
+                ad_s["serviced"] = True
+                ad_s["state"] = "done"
+                if gi_s >= 0:
+                    stats["gate_counts"][gi_s] += 1
+                stats["service_times"].append(in_service[aid_s]["duration"])
+                gate_occupied[gi_s] = False
+                for agent in sim.agents():
+                    if agent.id == aid_s:
+                        agent.model.desired_speed = ad_s["original_speed"]
+                        gy = gates[gi_s]["y"]
+                        target_exit = exit_upper if gy > CONCOURSE_WIDTH / 2 else exit_lower
+                        try:
+                            sim.switch_agent_journey(
+                                aid_s, journey_ids[gi_s], target_exit)
+                        except Exception:
+                            pass
+                        break
             del in_service[aid_s]
-            # agent_data는 유지 (통계용)
-            ad["serviced"] = True
-            ad["state"] = "done"
 
         # ── 에이전트별 상태 제어 ──
-        gq_counts = count_gate_queue(gate_queues)
+        gate_queue = count_gate_queue(sim, gates, agent_data)
 
         for agent in sim.agents():
             aid = agent.id
             if aid not in agent_data:
                 continue
             ad = agent_data[aid]
-            if ad["serviced"] or ad.get("in_queue"):
+            if ad["serviced"]:
                 continue
 
             px, py = agent.position
             gi = ad["gate_idx"]
-            dist_to_queue = QUEUE_POINT_X - px
+            dist_to_gate = GATE_X - px
 
-            # ── Phase 0: Influence Zone 진입 전 ──
-            if ad["choice_stage"] == 0 and dist_to_queue <= CHOICE_DIST_1ST:
+            # ── Phase 0: Influence Zone 진입 ──
+            if ad["choice_stage"] == 0 and dist_to_gate <= CHOICE_DIST_1ST:
                 gate_idx_new = choose_gate_lrp(
                     rng, (px, py), ad["original_speed"], ad["temperament"],
-                    gates, gq_counts, stage="1st")
+                    gates, gate_queue, stage="1st")
                 ad["gate_idx"] = gate_idx_new
                 ad["choice_stage"] = 1
+                if px >= 7.0:
+                    target_wp = gate_wp_ids[gate_idx_new]
+                else:
+                    target_wp = approach_wp_ids[gate_idx_new]
                 try:
                     sim.switch_agent_journey(
-                        aid, pre_gate_journey_ids[gate_idx_new],
-                        queue_wp_ids[gate_idx_new])
+                        aid, journey_ids[gate_idx_new], target_wp)
                 except Exception:
                     pass
                 gi = gate_idx_new
@@ -562,85 +555,160 @@ def run_simulation():
             if gi < 0:
                 continue
 
-            # ── 2차 재선택 (큐 포인트 3.0m 전) ──
-            if dist_to_queue <= CHOICE_DIST_2ND + QUEUE_ENTER_DIST and ad["choice_stage"] < 2:
-                ad["choice_stage"] = 2
-                new_gate = choose_gate_lrp(
-                    rng, (px, py), ad["original_speed"], ad["temperament"],
-                    gates, gq_counts, stage="2nd")
-                if new_gate != gi:
+            # ── Phase 1: 게이트 구간 (서비스 영역) ──
+            if GATE_ZONE_X_START <= px <= GATE_ZONE_X_END:
+                # 물리적 위치 기반 게이트 보정
+                if aid not in in_service:
+                    dists_to_gates = [abs(py - g["y"]) for g in gates]
+                    nearest_gate = int(np.argmin(dists_to_gates))
+                    if nearest_gate != gi:
+                        gi = nearest_gate
+                        ad["gate_idx"] = gi
+                        try:
+                            sim.switch_agent_journey(
+                                aid, journey_ids[gi], post_gate_wp_ids[gi])
+                        except Exception:
+                            pass
+
+                # 태그리스: 무정지 통과
+                if ad["is_tagless"] and aid not in in_service:
+                    ad["serviced"] = True
+                    ad["state"] = "done"
+                    stats["gate_counts"][gi] += 1
+                    stats["service_times"].append(0.0)
+                    agent.model.desired_speed = ad["original_speed"]
+                    gy = gates[gi]["y"]
+                    target_exit = exit_upper if gy > CONCOURSE_WIDTH / 2 else exit_lower
                     try:
                         sim.switch_agent_journey(
-                            aid, pre_gate_journey_ids[new_gate],
-                            queue_wp_ids[new_gate])
+                            aid, journey_ids[gi], target_exit)
+                    except Exception:
+                        pass
+                    continue
+
+                # 태그 사용자: 서비스 시작 (속도 감소하며 통과)
+                if aid not in in_service:
+                    ad["state"] = "in_gate"
+                    agent.model.desired_speed = GATE_PASS_SPEED
+                    in_service[aid] = {
+                        "start": current_time,
+                        "duration": ad["service_time"],
+                    }
+                    gate_occupied[gi] = True
+                continue
+
+            # ── Phase 2: 대기열 구간 ──
+            if 0 < dist_to_gate < QUEUE_FOLLOW_DIST:
+                if dist_to_gate <= QUEUE_STOP_DIST and gate_occupied[gi]:
+                    agent.model.desired_speed = QUEUE_MIN_SPEED
+                    ad["state"] = "queuing"
+                elif dist_to_gate <= QUEUE_STOP_DIST and not gate_occupied[gi]:
+                    agent.model.desired_speed = ad["original_speed"]
+                    ad["state"] = "flowing"
+                else:
+                    leader_pos = find_leader(
+                        (px, py), gi, sim, agent_data, in_service, aid)
+                    if leader_pos is not None:
+                        gap = leader_pos[0] - px
+                        if gap < LEADER_FOLLOW_GAP:
+                            agent.model.desired_speed = max(
+                                QUEUE_MIN_SPEED,
+                                ad["original_speed"] * (gap / LEADER_FOLLOW_GAP))
+                            ad["state"] = "queuing"
+                        else:
+                            agent.model.desired_speed = ad["original_speed"]
+                            ad["state"] = "flowing"
+                    else:
+                        agent.model.desired_speed = ad["original_speed"]
+                        ad["state"] = "flowing"
+            else:
+                ad["state"] = "flowing"
+
+        # ── 대기열 복구 ──
+        for agent in sim.agents():
+            aid = agent.id
+            if aid not in agent_data:
+                continue
+            ad = agent_data[aid]
+            if ad["serviced"] or aid in in_service:
+                continue
+            gi = ad["gate_idx"]
+            if gi < 0:
+                continue
+            if ad["state"] == "queuing" and agent.model.desired_speed < 0.1:
+                if not gate_occupied[gi]:
+                    agent.model.desired_speed = ad["original_speed"]
+                    ad["state"] = "flowing"
+
+        # ── 안전장치 ──
+        STUCK_TIMEOUT = 60.0
+        for agent in sim.agents():
+            aid = agent.id
+            if aid not in agent_data:
+                continue
+            ad = agent_data[aid]
+            if ad["serviced"] or aid in in_service:
+                continue
+            age = current_time - ad["spawn_time"]
+            if age > STUCK_TIMEOUT and ad["gate_idx"] >= 0:
+                if agent.model.desired_speed < 0.1:
+                    agent.model.desired_speed = ad["original_speed"]
+                    ad["state"] = "flowing"
+
+        # ── 경로 변경: Gao (2019) ──
+        for agent in sim.agents():
+            aid = agent.id
+            if aid not in agent_data:
+                continue
+            ad = agent_data[aid]
+            if ad["serviced"] or aid in in_service or ad["gate_idx"] < 0:
+                continue
+
+            pos = agent.position
+            dist_to_gate = GATE_X - pos[0]
+            if dist_to_gate <= 0:
+                continue
+
+            current_stage = ad["choice_stage"]
+            current_gate = ad["gate_idx"]
+
+            if dist_to_gate <= CHOICE_DIST_2ND and current_stage < 2:
+                ad["choice_stage"] = 2
+                new_gate = choose_gate_lrp(
+                    rng, pos, ad["original_speed"], ad["temperament"],
+                    gates, gate_queue, stage="2nd")
+                if new_gate != current_gate:
+                    try:
+                        sim.switch_agent_journey(
+                            aid, journey_ids[new_gate],
+                            gate_wp_ids[new_gate])
                         ad["gate_idx"] = new_gate
-                        gi = new_gate
                         stats["reroute_count"] += 1
                     except Exception:
                         pass
 
-            # ── 3차 재선택 (큐 포인트 1.5m 전) ──
-            if dist_to_queue <= CHOICE_DIST_3RD + QUEUE_ENTER_DIST and ad["choice_stage"] < 3:
+            elif dist_to_gate <= CHOICE_DIST_3RD and current_stage < 3:
                 ad["choice_stage"] = 3
                 stats["stage3_triggers"] += 1
                 new_gate = choose_gate_lrp(
-                    rng, (px, py), ad["original_speed"], ad["temperament"],
-                    gates, gq_counts, stage="3rd",
+                    rng, pos, ad["original_speed"], ad["temperament"],
+                    gates, gate_queue, stage="3rd",
                     gate_occupied=gate_occupied,
-                    current_gate_idx=gi)
-                if new_gate != gi:
+                    current_gate_idx=current_gate)
+                if new_gate != current_gate:
                     try:
                         sim.switch_agent_journey(
-                            aid, pre_gate_journey_ids[new_gate],
-                            queue_wp_ids[new_gate])
+                            aid, journey_ids[new_gate],
+                            gate_wp_ids[new_gate])
                         ad["gate_idx"] = new_gate
-                        gi = new_gate
                         stats["reroute_count"] += 1
                     except Exception:
                         pass
 
-            # ── 큐 포인트 도달 판정 ──
-            if dist_to_queue <= QUEUE_ENTER_DIST:
-                ad["in_queue"] = True
-                gate_queues[gi].append(aid)
-                # 즉시 정지
-                agent.model.desired_speed = 0.0
-                agent.model.speed = 0.0
-                ad["state"] = "queuing"
-
-        # ── 대기열 서비스 로직 ──
-        for gi in range(N_GATES):
-            queue = gate_queues[gi]
-            if not queue:
-                continue
-
-            # 맨 앞 에이전트: 서비스 가능하면 시작
-            front_aid = queue[0]
-            if front_aid not in in_service and not gate_occupied[gi]:
-                ad = agent_data[front_aid]
-                if ad["is_tagless"]:
-                    # 태그리스: 즉시 통과 (서비스 시간 0)
-                    gate_occupied[gi] = True
-                    in_service[front_aid] = {
-                        "start": current_time,
-                        "duration": 0.0,
-                        "gate_idx": gi,
-                    }
-                    ad["state"] = "in_service"
-                else:
-                    # 태그: 서비스 시간 적용
-                    gate_occupied[gi] = True
-                    in_service[front_aid] = {
-                        "start": current_time,
-                        "duration": ad["service_time"],
-                        "gate_idx": gi,
-                    }
-                    ad["state"] = "in_service"
-
         # ── 통계 & 프레임 ──
         if step % int(1.0 / DT) == 0:
-            stats["queue_history"].append(
-                (current_time, count_gate_queue(gate_queues).copy()))
+            gd = count_gate_queue(sim, gates, agent_data)
+            stats["queue_history"].append((current_time, gd.copy()))
 
         if step % gif_interval == 0:
             positions = [(a.position[0], a.position[1]) for a in sim.agents()]
@@ -649,12 +717,10 @@ def run_simulation():
         sim.iterate()
 
         if step % int(30.0 / DT) == 0 and step > 0:
-            in_sim = sim.agent_count()
-            total_passed = sum(stats["gate_counts"])
-            print(f"  t={current_time:.0f}s | agents: {in_sim} "
-                  f"| spawned: {spawned_count} | passed: {total_passed} "
+            print(f"  t={current_time:.0f}s | agents: {sim.agent_count()} "
+                  f"| spawned: {spawned_count} | passed: {sum(stats['gate_counts'])} "
                   f"| re-route: {stats['reroute_count']} "
-                  f"| queuing: {sum(len(q) for q in gate_queues)}")
+                  f"| 3rd: {stats['stage3_triggers']}")
 
     # ── 결과 ──
     total_passed = sum(stats["gate_counts"])
@@ -677,13 +743,22 @@ def run_simulation():
             print(f"서비스 시간 (태그만): 평균 {tag_st.mean():.2f}s, "
                   f"중앙값 {np.median(tag_st):.2f}s, 범위 {tag_st.min():.2f}~{tag_st.max():.2f}s")
 
-    # 잔류 대기열 진단
-    total_queuing = sum(len(q) for q in gate_queues)
-    if total_queuing > 0:
-        print(f"\n잔류 대기열: {total_queuing}명")
-        for gi, q in enumerate(gate_queues):
-            if q:
-                print(f"  G{gi+1}: {len(q)}명")
+    # 미통과 진단
+    active_ids = {agent.id for agent in sim.agents()}
+    unserviced = 0
+    for aid, ad in agent_data.items():
+        if not ad["serviced"]:
+            unserviced += 1
+            if aid in active_ids:
+                for agent in sim.agents():
+                    if agent.id == aid:
+                        px, py = agent.position
+                        print(f"  [sim내] id={aid}: x={px:.1f} y={py:.1f} "
+                              f"G{ad['gate_idx']+1 if ad['gate_idx']>=0 else '?'} "
+                              f"state={ad['state']}")
+                        break
+    if unserviced > 0:
+        print(f"\n미통과 에이전트: {unserviced}명")
 
     print(f"\n출력 생성...")
     create_snapshots(gif_frames, gates, obstacles, gate_openings)
@@ -708,6 +783,7 @@ def draw_frame(ax, positions, gates, obstacles, gate_openings, time_sec):
     outer_y = [0, 0, CONCOURSE_WIDTH, CONCOURSE_WIDTH, NOTCH_Y, NOTCH_Y, 0]
     ax.plot(outer_x, outer_y, color='#E65100', linewidth=1.5)
 
+    # 배리어 (시각화용)
     for obs in obstacles:
         if obs.geom_type == 'Polygon':
             ox, oy = obs.exterior.xy
@@ -719,14 +795,11 @@ def draw_frame(ax, positions, gates, obstacles, gate_openings, time_sec):
 
     for opening in gate_openings:
         ox, oy = opening.exterior.xy
-        ax.fill(ox, oy, color='#66BB6A', edgecolor='#2E7D32', linewidth=0.8, alpha=0.5)
+        ax.fill(ox, oy, color='#66BB6A', edgecolor='#2E7D32', linewidth=0.8, alpha=0.5, zorder=3)
 
     for g in gates:
         ax.text(g["x"] + GATE_LENGTH / 2, g["y"], str(g["id"] + 1),
-                ha='center', va='center', fontsize=7, fontweight='bold', color='#1B5E20')
-
-    # 큐 포인트 라인
-    ax.axvline(QUEUE_POINT_X, color='#FF9800', linewidth=1, linestyle='--', alpha=0.5)
+                ha='center', va='center', fontsize=7, fontweight='bold', color='#1B5E20', zorder=4)
 
     for stair in STAIRS:
         ax.plot([stair["x"], stair["x"]],
@@ -775,7 +848,7 @@ def create_snapshots(frames, gates, obstacles, gate_openings):
         draw_frame(axes[idx], positions, gates, obstacles, gate_openings, t)
         axes[idx].set_title(f't = {target_t}s ({len(positions)} agents)',
                             fontsize=12, fontweight='bold')
-    fig.suptitle('성수역 서쪽 대합실 v8 (GCFM + Queueing Service Node)',
+    fig.suptitle('성수역 서쪽 대합실 v8 (GCFM)',
                  fontsize=16, fontweight='bold')
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "snapshots_v8.png", dpi=150, bbox_inches='tight')
@@ -818,7 +891,7 @@ def plot_queue_history(queue_history):
         train_t += TRAIN_INTERVAL
     ax.set_xlabel('시간 (초)')
     ax.set_ylabel('게이트 앞 대기 인원 (명)')
-    ax.set_title('게이트별 대기 인원 변화 (v8 GCFM) - 빨간 점선: 열차 도착')
+    ax.set_title('게이트별 대기 인원 변화 (v8 GCFM)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -836,7 +909,7 @@ def plot_service_time_dist(service_times):
                label=f'평균: {np.mean(service_times):.2f}s')
     ax.set_xlabel('서비스 시간 (초)')
     ax.set_ylabel('빈도')
-    ax.set_title('개찰구 서비스 시간 분포 (v8)')
+    ax.set_title('개찰구 서비스 시간 분포 (v8 GCFM)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -846,11 +919,11 @@ def plot_service_time_dist(service_times):
 
 
 # =============================================================================
-# 자동 평가 척도
+# 자동 평가
 # =============================================================================
 def evaluate_simulation(stats, spawned_count, sim_time):
     print("\n" + "=" * 60)
-    print("시뮬레이션 평가 결과 (v8 GCFM + Queueing Node)")
+    print("시뮬레이션 평가 결과 (v8 GCFM)")
     print("=" * 60)
 
     total_passed = sum(stats["gate_counts"])
@@ -871,7 +944,6 @@ def evaluate_simulation(stats, spawned_count, sim_time):
         print(f"         게이트별: {' | '.join(f'G{i+1}:{c}명({p*100:.0f}%)' for i, (c, p) in enumerate(zip(stats['gate_counts'], proportions)))}")
         zero_gates = [i+1 for i, c in enumerate(stats["gate_counts"]) if c == 0]
         if zero_gates:
-            print(f"  [WARN] 미사용 게이트: {zero_gates}")
             issues.append(f"게이트 {zero_gates} 미사용")
 
     if stats["service_times"]:
@@ -882,8 +954,6 @@ def evaluate_simulation(stats, spawned_count, sim_time):
             status = "PASS" if 1.5 <= mean_st <= 2.5 else "WARN"
             print(f"[{status}] 태그 서비스시간: 평균 {mean_st:.2f}s "
                   f"(Gao 실측: 2.0s, 범위 {tag_times.min():.2f}~{tag_times.max():.2f}s)")
-            if status != "PASS":
-                issues.append(f"서비스 시간 평균 {mean_st:.2f}s")
 
     reroute_ratio = stats["reroute_count"] / max(spawned_count, 1) * 100
     status = "PASS" if reroute_ratio < 150 else ("WARN" if reroute_ratio < 300 else "FAIL")
@@ -905,7 +975,7 @@ def evaluate_simulation(stats, spawned_count, sim_time):
         print("종합: PASS")
     else:
         severity = "FAIL" if any("통과 못한" in i for i in issues) else "WARN"
-        print(f"종합: {severity} — 검토 필요:")
+        print(f"종합: {severity}")
         for issue in issues:
             print(f"  - {issue}")
     print("=" * 60)
