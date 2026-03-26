@@ -600,17 +600,18 @@ def run_simulation():
                 continue
 
             # ── 개별 서비스 포인트 방식 ──
-            # 각 게이트는 독립적 서비스 포인트 (AnyLogic Service Point 방식)
-            # 판단 기준: 자기 게이트 위치(gate_x, gate_y)에 대한 근접도
+            # 각 게이트 = 독립 서비스 포인트
+            # 대기: 수동 속도 제어 + 게이트 waypoint 유지 (게이트 뒤에서 대기)
             gate_y = gates[gi]["y"]
             dist_to_my_gate = np.hypot(px - GATE_X, py - gate_y)
 
-            # 서비스 시작 반경: 게이트 중심에서 1.0m 이내
+            # 서비스 시작: 게이트 중심에서 1.0m 이내
             SERVICE_TRIGGER_DIST = 1.0
 
             if dist_to_my_gate <= SERVICE_TRIGGER_DIST and aid not in in_service:
-                # 게이트 점유 중이면 → 정지 대기
                 if gate_occupied[gi]:
+                    # 게이트 점유 중 → 정지 대기
+                    # waypoint는 gate_wp를 유지 → 게이트 뒤(-x)에서 줄서기
                     set_agent_speed(agent, QUEUE_MIN_SPEED)
                     ad["state"] = "queuing"
                     continue
@@ -629,9 +630,9 @@ def run_simulation():
                         pass
                     continue
 
-                # 태그: 서비스 시작
+                # 태그: 서비스 시작 (정지 → 태핑 → 통과)
                 ad["state"] = "in_gate"
-                set_agent_speed(agent, GATE_PASS_SPEED)
+                set_agent_speed(agent, QUEUE_MIN_SPEED)
                 in_service[aid] = {
                     "start": current_time,
                     "duration": ad["service_time"],
@@ -639,15 +640,15 @@ def run_simulation():
                 gate_occupied[gi] = True
                 continue
 
-            # 서비스 영역 밖 → 정상 보행
-            # CFSM이 앞사람과의 간격을 자동으로 조절 (자연 대기열)
+            # 서비스 영역 밖
             if ad["state"] == "queuing" and not gate_occupied[gi]:
+                # 게이트 비었으면 → 속도 복원, 진입
                 set_agent_speed(agent, ad["original_speed"])
                 ad["state"] = "flowing"
             elif ad["state"] != "queuing":
                 ad["state"] = "flowing"
 
-        # ── 대기열 복구 ──
+        # ── 대기열 복구: 게이트 비면 속도 복원 ──
         for agent in sim.agents():
             aid = agent.id
             if aid not in agent_data:
@@ -658,10 +659,9 @@ def run_simulation():
             gi = ad["gate_idx"]
             if gi < 0:
                 continue
-            if ad["state"] == "queuing" and get_agent_speed(agent) < 0.1:
-                if not gate_occupied[gi]:
-                    set_agent_speed(agent, ad["original_speed"])
-                    ad["state"] = "flowing"
+            if ad["state"] == "queuing" and not gate_occupied[gi]:
+                set_agent_speed(agent, ad["original_speed"])
+                ad["state"] = "flowing"
 
         # ── 안전장치: in_gate_walking 교착 해소 ──
         GATE_WALK_TIMEOUT = 15.0  # 15초 이상 게이트 통과 중이면 강제 완료
