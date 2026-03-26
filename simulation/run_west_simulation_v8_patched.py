@@ -1,7 +1,15 @@
 """
-성수역 서쪽 대합실 보행자 시뮬레이션 v8
+성수역 서쪽 대합실 보행자 시뮬레이션 v8_patched
 
-v7 → v8 변경:
+v8 → v8_patched 변경:
+  패치 1: Velocity Smoothing (진동 완화)
+    - 대기열 속도 제어에서 즉각적인 속도 변경 대신 EMA(지수 이동 평균) 적용
+    - SPEED_SMOOTHING = 0.3 (0~1, 작을수록 부드러움)
+    - Phase 1 게이트 통과 중(in_gate, in_gate_walking)에서는 즉시 적용 (서비스 모델)
+  패치 2: Post-hoc Position Correction (겹침 보정)
+    - JuPedSim API 제한으로 agent.position 직접 변경 불가 → 미적용 (주석 처리)
+
+v7 → v8 변경 (기존):
   물리 엔진: CFSM V2 → GCFM (Generalized Centrifugal Force Model)
   - 타원형 보행자 (속도에 따라 어깨축 축소) → 좁은 게이트 접근 시 자연스러운 체형 변화
   - Chraibi et al. (2010), JuPedSim 자체 개발팀 모델
@@ -29,6 +37,7 @@ v7 → v8 변경:
 
 import jupedsim as jps
 import numpy as np
+import math
 import pathlib
 import matplotlib
 matplotlib.use('Agg')
@@ -120,6 +129,7 @@ QUEUE_STOP_DIST = 0.5
 QUEUE_FOLLOW_DIST = 5.0
 LEADER_FOLLOW_GAP = 0.6
 QUEUE_MIN_SPEED = 0.05   # GCFM: 완전 정지 대신 극저속 (벽 반발 유지)
+SPEED_SMOOTHING = 0.3    # [패치1] EMA 계수 (0~1, 작을수록 부드러움)
 
 OUTPUT_DIR = pathlib.Path(__file__).parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -363,20 +373,27 @@ def create_simulation():
             exit_upper, exit_lower)
 
 
+def smooth_speed(agent, target_speed):
+    """[패치1] EMA 기반 속도 부드러운 전환 (진동 완화)"""
+    current = agent.model.desired_speed
+    agent.model.desired_speed = current + SPEED_SMOOTHING * (target_speed - current)
+
+
 # =============================================================================
 # 시뮬레이션 실행
 # =============================================================================
 def run_simulation():
     print("=" * 60)
-    print("성수역 서쪽 대합실 시뮬레이션 v8 (SFM)")
-    print(f"  물리 엔진: SFM (Helbing et al. 2000, 접촉력 모델)")
+    print("성수역 서쪽 대합실 시뮬레이션 v8_patched (GCFM + Velocity Smoothing)")
+    print(f"  물리 엔진: GCFM (Chraibi et al. 2010)")
+    print(f"  [패치1] Velocity Smoothing: EMA alpha={SPEED_SMOOTHING}")
+    print(f"  [패치2] Position Correction: JuPedSim API 제한으로 미적용")
     print(f"  게이트 통과: waypoint 기반 속도 제어 (물리적 통과)")
     print(f"  게이트 선택: Gao (2019) LRP 모델")
     print(f"  3단계 재선택: {CHOICE_DIST_1ST}m / {CHOICE_DIST_2ND}m / {CHOICE_DIST_3RD}m")
     print(f"  서비스시간(태그): 평균 {SERVICE_TIME_MEAN}s")
     print(f"  태그리스 비율: {TAGLESS_RATIO*100:.0f}%")
     print(f"  희망속도: N({PED_SPEED_MEAN}, {PED_SPEED_STD})")
-    print(f"  SFM: radius={SFM_RADIUS}m, body_force={SFM_BODY_FORCE}, friction={SFM_FRICTION}")
     print("=" * 60)
 
     (sim, gates, walkable, obstacles, gate_openings,
@@ -626,13 +643,13 @@ def run_simulation():
                     gate_occupied[gi] = True
                 continue
 
-            # ── Phase 2: 대기열 구간 ──
+            # ── Phase 2: 대기열 구간 ── [패치1: EMA smoothing 적용]
             if 0 < dist_to_gate < QUEUE_FOLLOW_DIST:
                 if dist_to_gate <= QUEUE_STOP_DIST and gate_occupied[gi]:
-                    agent.model.desired_speed = QUEUE_MIN_SPEED
+                    smooth_speed(agent, QUEUE_MIN_SPEED)
                     ad["state"] = "queuing"
                 elif dist_to_gate <= QUEUE_STOP_DIST and not gate_occupied[gi]:
-                    agent.model.desired_speed = ad["original_speed"]
+                    smooth_speed(agent, ad["original_speed"])
                     ad["state"] = "flowing"
                 else:
                     leader_pos = find_leader(
@@ -640,20 +657,21 @@ def run_simulation():
                     if leader_pos is not None:
                         gap = leader_pos[0] - px
                         if gap < LEADER_FOLLOW_GAP:
-                            agent.model.desired_speed = max(
+                            target = max(
                                 QUEUE_MIN_SPEED,
                                 ad["original_speed"] * (gap / LEADER_FOLLOW_GAP))
+                            smooth_speed(agent, target)
                             ad["state"] = "queuing"
                         else:
-                            agent.model.desired_speed = ad["original_speed"]
+                            smooth_speed(agent, ad["original_speed"])
                             ad["state"] = "flowing"
                     else:
-                        agent.model.desired_speed = ad["original_speed"]
+                        smooth_speed(agent, ad["original_speed"])
                         ad["state"] = "flowing"
             else:
                 ad["state"] = "flowing"
 
-        # ── 대기열 복구 ──
+        # ── 대기열 복구 ── [패치1: EMA smoothing 적용]
         for agent in sim.agents():
             aid = agent.id
             if aid not in agent_data:
@@ -666,7 +684,7 @@ def run_simulation():
                 continue
             if ad["state"] == "queuing" and agent.model.desired_speed < 0.1:
                 if not gate_occupied[gi]:
-                    agent.model.desired_speed = ad["original_speed"]
+                    smooth_speed(agent, ad["original_speed"])
                     ad["state"] = "flowing"
 
         # ── 안전장치 ──
@@ -744,6 +762,27 @@ def run_simulation():
             gif_frames.append((current_time, positions))
 
         sim.iterate()
+
+        # ── [패치2] Post-hoc Position Correction (겹침 보정) ──
+        # JuPedSim API 제한으로 미적용: agent.position은 읽기 전용이며
+        # 직접 위치 변경이 불가능합니다.
+        # 아래는 구현 의도를 보존한 주석 코드입니다.
+        #
+        # MIN_DIST = 0.30  # 2 * a_min = 2 * 0.15
+        # agents_list = list(sim.agents())
+        # for i, agent_i in enumerate(agents_list):
+        #     for j, agent_j in enumerate(agents_list):
+        #         if j <= i:
+        #             continue
+        #         dx = agent_j.position[0] - agent_i.position[0]
+        #         dy = agent_j.position[1] - agent_i.position[1]
+        #         d = math.hypot(dx, dy)
+        #         if d < MIN_DIST and d > 0.001:
+        #             overlap = MIN_DIST - d
+        #             nx, ny = dx / d, dy / d
+        #             half = overlap * 0.5
+        #             # agent_i.position -= (half * nx, half * ny)  # 읽기 전용
+        #             # agent_j.position += (half * nx, half * ny)  # 읽기 전용
 
         if step % int(30.0 / DT) == 0 and step > 0:
             print(f"  t={current_time:.0f}s | agents: {sim.agent_count()} "
@@ -877,12 +916,12 @@ def create_snapshots(frames, gates, obstacles, gate_openings):
         draw_frame(axes[idx], positions, gates, obstacles, gate_openings, t)
         axes[idx].set_title(f't = {target_t}s ({len(positions)} agents)',
                             fontsize=12, fontweight='bold')
-    fig.suptitle('성수역 서쪽 대합실 v8 (GCFM)',
+    fig.suptitle('성수역 서쪽 대합실 v8_patched (GCFM + Velocity Smoothing)',
                  fontsize=16, fontweight='bold')
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "snapshots_v8.png", dpi=150, bbox_inches='tight')
+    fig.savefig(OUTPUT_DIR / "snapshots_v8_patched.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_v8.png'}")
+    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_v8_patched.png'}")
 
 
 def create_gif(frames, gates, obstacles, gate_openings):
@@ -896,11 +935,11 @@ def create_gif(frames, gates, obstacles, gate_openings):
     def animate(i):
         t, positions = target_frames[i]
         draw_frame(ax, positions, gates, obstacles, gate_openings, t)
-        ax.set_title(f'성수역 서쪽 v8 (GCFM) | t = {t:.1f}s | {len(positions)} agents',
+        ax.set_title(f'성수역 서쪽 v8_patched (GCFM+EMA) | t = {t:.1f}s | {len(positions)} agents',
                      fontsize=12, fontweight='bold')
 
     anim = FuncAnimation(fig, animate, frames=len(target_frames), interval=200)
-    gif_path = OUTPUT_DIR / "simulation_v8.gif"
+    gif_path = OUTPUT_DIR / "simulation_v8_patched.gif"
     anim.save(str(gif_path), writer=PillowWriter(fps=5), dpi=100)
     plt.close(fig)
     print(f"  GIF: {gif_path}")
@@ -920,13 +959,13 @@ def plot_queue_history(queue_history):
         train_t += TRAIN_INTERVAL
     ax.set_xlabel('시간 (초)')
     ax.set_ylabel('게이트 앞 대기 인원 (명)')
-    ax.set_title('게이트별 대기 인원 변화 (v8 GCFM)')
+    ax.set_title('게이트별 대기 인원 변화 (v8_patched GCFM+EMA)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "queue_history_v8.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "queue_history_v8_patched.png", dpi=150)
     plt.close(fig)
-    print(f"  대기열: {OUTPUT_DIR / 'queue_history_v8.png'}")
+    print(f"  대기열: {OUTPUT_DIR / 'queue_history_v8_patched.png'}")
 
 
 def plot_service_time_dist(service_times):
@@ -938,13 +977,13 @@ def plot_service_time_dist(service_times):
                label=f'평균: {np.mean(service_times):.2f}s')
     ax.set_xlabel('서비스 시간 (초)')
     ax.set_ylabel('빈도')
-    ax.set_title('개찰구 서비스 시간 분포 (v8 GCFM)')
+    ax.set_title('개찰구 서비스 시간 분포 (v8_patched GCFM+EMA)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "service_time_v8.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "service_time_v8_patched.png", dpi=150)
     plt.close(fig)
-    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_v8.png'}")
+    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_v8_patched.png'}")
 
 
 # =============================================================================
@@ -952,7 +991,7 @@ def plot_service_time_dist(service_times):
 # =============================================================================
 def evaluate_simulation(stats, spawned_count, sim_time):
     print("\n" + "=" * 60)
-    print("시뮬레이션 평가 결과 (v8 GCFM)")
+    print("시뮬레이션 평가 결과 (v8_patched GCFM + Velocity Smoothing)")
     print("=" * 60)
 
     total_passed = sum(stats["gate_counts"])

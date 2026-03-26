@@ -1,0 +1,29 @@
+{
+  "V4_gate_selection": {
+    "pass": true
+  },
+  "V5_dt_convergence": {
+    "pass": false,
+    "results": [
+      {
+        "dt": 0.01,
+        "Js": 1.7528838017749215,
+        "deviation_pct": 0.0
+      },
+      {
+        "dt": 0.005,
+        "Js": 1.3305859980265724,
+        "deviation_pct": 24.09160283874733
+      }
+    ]
+  },
+  "V6_overlap": {
+    "pass": false,
+    "max_overlap_m": 0.22360951446974697
+  },
+  "V7_symmetry": {
+    "pass": true,
+    "mean_left_pct": 46.55952380952381,
+    "deviation_pct": 3.44047619047619
+  }
+}

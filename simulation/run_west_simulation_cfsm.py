@@ -1,13 +1,13 @@
 """
-성수역 서쪽 대합실 보행자 시뮬레이션 v8
+성수역 서쪽 대합실 보행자 시뮬레이션 — CFSM V2
 
-v7 → v8 변경:
-  물리 엔진: CFSM V2 → GCFM (Generalized Centrifugal Force Model)
-  - 타원형 보행자 (속도에 따라 어깨축 축소) → 좁은 게이트 접근 시 자연스러운 체형 변화
-  - Chraibi et al. (2010), JuPedSim 자체 개발팀 모델
+v8 (GCFM) → CFSM 변경:
+  물리 엔진: GCFM → CollisionFreeSpeedModelV2 (Tordeux et al., 2016)
+  - 속도 기반 모델 (힘 기반이 아님) → 계산 효율 ↑
+  - 충돌 없는 경로 예측 → 좁은 통로 자연 통과
 
   게이트 통과 메커니즘:
-  - GCFM 기하구조에는 배리어 미포함 (힘 기반 모델의 얇은 벽 관통 방지)
+  - CFSM 기하구조에 배리어 포함 (include_barrier=True)
   - 게이트 통과는 waypoint + 속도 제어로 구현:
     1. 에이전트가 게이트 입구 waypoint 도달
     2. 게이트 점유 중이면 대기 (극저속)
@@ -22,8 +22,7 @@ v7 → v8 변경:
 
 논문 프레이밍:
   - 전략(의사결정): Gao et al. (2019) LRP 모델
-  - 전술(물리적 보행): GCFM (Chraibi et al., 2010)
-    - Gao (2019)의 SFM(원형)보다 타원형 body → 협소 공간 접근 시 현실적 회피
+  - 전술(물리적 보행): CFSM V2 (Tordeux et al., 2016)
   - 게이트 통과: Gao (2019) 서비스 시간 모델 + 속도 제어
 """
 
@@ -64,24 +63,18 @@ PLATOON_SPREAD = 15.0
 FIRST_TRAIN_TIME = 5.0
 
 # =============================================================================
-# SFM 파라미터 (Helbing & Molnar 1995, Helbing et al. 2000)
+# 보행자 속도 파라미터
 # =============================================================================
 PED_SPEED_MEAN = 1.34
 PED_SPEED_STD = 0.26
 PED_SPEED_MIN = 0.8
 PED_SPEED_MAX = 1.5
 
-# SFM 모델 파라미터 (Helbing et al. 2000)
-SFM_BODY_FORCE = 120000.0    # 접촉 시 body force (N)
-SFM_FRICTION = 240000.0       # 접촉 시 마찰력 (N)
-
-# SFM 에이전트 파라미터
-SFM_MASS = 80.0               # 체중 (kg)
-SFM_REACTION_TIME = 0.5       # 반응 시간 (s)
-SFM_AGENT_SCALE = 2000.0      # 에이전트 간 사회력 강도
-SFM_OBSTACLE_SCALE = 2000.0   # 장애물 사회력 강도
-SFM_FORCE_DISTANCE = 0.08     # 사회력 감쇠 거리 (m)
-SFM_RADIUS = 0.2              # 보행자 반경 (m) - Gao (2019) 0.225m 참조
+# =============================================================================
+# CFSM V2 에이전트 파라미터 (Tordeux et al., 2016)
+# =============================================================================
+CFSM_TIME_GAP = 0.80      # 시간 간격 (s) — 병목 유량 캘리브레이션 결과 (Tordeux 원논문: 1.06)
+CFSM_RADIUS = 0.15        # 보행자 반경 (m)
 
 # =============================================================================
 # 서비스 시간 파라미터 (Gao et al., 2019)
@@ -119,7 +112,7 @@ GATE_ZONE_X_END = GATE_X + GATE_LENGTH + 0.3
 QUEUE_STOP_DIST = 0.5
 QUEUE_FOLLOW_DIST = 5.0
 LEADER_FOLLOW_GAP = 0.6
-QUEUE_MIN_SPEED = 0.05   # GCFM: 완전 정지 대신 극저속 (벽 반발 유지)
+QUEUE_MIN_SPEED = 0.05   # CFSM: 완전 정지 대신 극저속
 
 OUTPUT_DIR = pathlib.Path(__file__).parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -276,26 +269,30 @@ def find_leader(agent_pos, gate_idx, sim, agent_data, in_service, my_id):
 
 
 # =============================================================================
-# 시뮬레이션 생성 (GCFM, 배리어 없는 기하구조)
+# 속도 제어 헬퍼 — CFSM V2에서 v0 접근
+# =============================================================================
+def set_agent_speed(agent, speed):
+    """CFSM V2 에이전트의 희망 속도를 설정한다."""
+    agent.model.desired_speed = speed
+
+
+def get_agent_speed(agent):
+    """CFSM V2 에이전트의 현재 희망 속도를 반환한다."""
+    return agent.model.desired_speed
+
+
+# =============================================================================
+# 시뮬레이션 생성 (CFSM V2, 배리어 포함 기하구조)
 # =============================================================================
 def create_simulation():
     gates = calculate_gate_positions()
 
-    # GCFM 기하구조: 배리어 포함 (물리적 벽)
-    # 배리어 두께 1.5m → GCFM 관통 우려 없음 (a_min=0.15m 대비 충분)
-    # 게이트 통로 0.55m → 보행자 직경 0.30m 통과 가능
+    # CFSM V2 기하구조: 배리어 포함 (물리적 벽)
     walkable, _, _ = build_geometry(gates, include_barrier=True)
     _, vis_obstacles, gate_openings = build_geometry(gates, include_barrier=True)
 
-    # GCFM 파라미터 — verify_gcfm_basic.py에서 검증 완료 (V1~V3 PASS)
-    model = jps.GeneralizedCentrifugalForceModel(
-        strength_neighbor_repulsion=0.13,   # Chraibi (2010) + 병목 유량 캘리브레이션
-        strength_geometry_repulsion=0.10,
-        max_neighbor_interaction_distance=2.0,
-        max_geometry_interaction_distance=2.0,
-        max_neighbor_repulsion_force=3.0,   # 병목 유량 캘리브레이션 결과
-        max_geometry_repulsion_force=3.0,
-    )
+    # CFSM V2 — 반발력 파라미터는 에이전트별 설정 (모델 자체는 파라미터 없음)
+    model = jps.CollisionFreeSpeedModelV2()
 
     sim = jps.Simulation(model=model, geometry=walkable, dt=DT)
 
@@ -368,15 +365,15 @@ def create_simulation():
 # =============================================================================
 def run_simulation():
     print("=" * 60)
-    print("성수역 서쪽 대합실 시뮬레이션 v8 (SFM)")
-    print(f"  물리 엔진: SFM (Helbing et al. 2000, 접촉력 모델)")
+    print("성수역 서쪽 대합실 시뮬레이션 (CFSM V2)")
+    print(f"  물리 엔진: CollisionFreeSpeedModelV2 (Tordeux et al., 2016)")
     print(f"  게이트 통과: waypoint 기반 속도 제어 (물리적 통과)")
     print(f"  게이트 선택: Gao (2019) LRP 모델")
     print(f"  3단계 재선택: {CHOICE_DIST_1ST}m / {CHOICE_DIST_2ND}m / {CHOICE_DIST_3RD}m")
     print(f"  서비스시간(태그): 평균 {SERVICE_TIME_MEAN}s")
     print(f"  태그리스 비율: {TAGLESS_RATIO*100:.0f}%")
     print(f"  희망속도: N({PED_SPEED_MEAN}, {PED_SPEED_STD})")
-    print(f"  SFM: radius={SFM_RADIUS}m, body_force={SFM_BODY_FORCE}, friction={SFM_FRICTION}")
+    print(f"  CFSM V2: time_gap={CFSM_TIME_GAP}s, radius={CFSM_RADIUS}m")
     print("=" * 60)
 
     (sim, gates, walkable, obstacles, gate_openings,
@@ -449,19 +446,19 @@ def run_simulation():
                     sid = default_stage_id
 
                 try:
-                    # 에이전트 파라미터 — verify_gcfm_basic.py와 동일
+                    # CFSM V2 에이전트 파라미터 — Tordeux et al. (2016)
                     agent_id = sim.add_agent(
-                        jps.GeneralizedCentrifugalForceModelAgentParameters(
+                        jps.CollisionFreeSpeedModelV2AgentParameters(
                             journey_id=jid,
                             stage_id=sid,
                             position=(spawn_x, spawn_y),
+                            time_gap=CFSM_TIME_GAP,
                             desired_speed=desired_speed,
-                            mass=1.0,
-                            tau=0.5,
-                            a_v=1.0,
-                            a_min=0.15,   # 0.55m 게이트 통로 대응
-                            b_min=0.15,
-                            b_max=0.25,   # 직경 0.50m < 통로 0.55m
+                            radius=CFSM_RADIUS,
+                            strength_neighbor_repulsion=8.0,
+                            range_neighbor_repulsion=0.1,
+                            strength_geometry_repulsion=5.0,
+                            range_geometry_repulsion=0.02,
                         ))
                     agent_data[agent_id] = {
                         "gate_idx": gate_idx,
@@ -511,7 +508,7 @@ def run_simulation():
                 gate_occupied[gi_s] = False  # 게이트 해제 (다음 사람 진입 가능)
                 for agent in sim.agents():
                     if agent.id == aid_s:
-                        agent.model.desired_speed = GATE_PASS_SPEED  # 0.65 m/s로 걸어나감
+                        set_agent_speed(agent, GATE_PASS_SPEED)  # 0.65 m/s로 걸어나감
                         try:
                             sim.switch_agent_journey(
                                 aid_s, journey_ids[gi_s], post_gate_wp_ids[gi_s])
@@ -537,7 +534,7 @@ def run_simulation():
                 ad["state"] = "done"
                 if gi_s >= 0:
                     stats["gate_counts"][gi_s] += 1
-                agent.model.desired_speed = ad["original_speed"]
+                set_agent_speed(agent, ad["original_speed"])
                 gy = gates[gi_s]["y"]
                 target_exit = exit_upper if gy > CONCOURSE_WIDTH / 2 else exit_lower
                 try:
@@ -607,7 +604,7 @@ def run_simulation():
                     ad["state"] = "in_gate_walking"
                     stats["service_times"].append(0.0)
                     # 속도 유지한 채 게이트 출구 waypoint로 이동
-                    agent.model.desired_speed = ad["original_speed"]
+                    set_agent_speed(agent, ad["original_speed"])
                     try:
                         sim.switch_agent_journey(
                             aid, journey_ids[gi], post_gate_wp_ids[gi])
@@ -618,7 +615,7 @@ def run_simulation():
                 # 태그 사용자: 서비스 시작 (속도 감소하며 통과)
                 if aid not in in_service:
                     ad["state"] = "in_gate"
-                    agent.model.desired_speed = GATE_PASS_SPEED
+                    set_agent_speed(agent, GATE_PASS_SPEED)
                     in_service[aid] = {
                         "start": current_time,
                         "duration": ad["service_time"],
@@ -629,10 +626,10 @@ def run_simulation():
             # ── Phase 2: 대기열 구간 ──
             if 0 < dist_to_gate < QUEUE_FOLLOW_DIST:
                 if dist_to_gate <= QUEUE_STOP_DIST and gate_occupied[gi]:
-                    agent.model.desired_speed = QUEUE_MIN_SPEED
+                    set_agent_speed(agent, QUEUE_MIN_SPEED)
                     ad["state"] = "queuing"
                 elif dist_to_gate <= QUEUE_STOP_DIST and not gate_occupied[gi]:
-                    agent.model.desired_speed = ad["original_speed"]
+                    set_agent_speed(agent, ad["original_speed"])
                     ad["state"] = "flowing"
                 else:
                     leader_pos = find_leader(
@@ -640,15 +637,15 @@ def run_simulation():
                     if leader_pos is not None:
                         gap = leader_pos[0] - px
                         if gap < LEADER_FOLLOW_GAP:
-                            agent.model.desired_speed = max(
+                            set_agent_speed(agent, max(
                                 QUEUE_MIN_SPEED,
-                                ad["original_speed"] * (gap / LEADER_FOLLOW_GAP))
+                                ad["original_speed"] * (gap / LEADER_FOLLOW_GAP)))
                             ad["state"] = "queuing"
                         else:
-                            agent.model.desired_speed = ad["original_speed"]
+                            set_agent_speed(agent, ad["original_speed"])
                             ad["state"] = "flowing"
                     else:
-                        agent.model.desired_speed = ad["original_speed"]
+                        set_agent_speed(agent, ad["original_speed"])
                         ad["state"] = "flowing"
             else:
                 ad["state"] = "flowing"
@@ -664,9 +661,9 @@ def run_simulation():
             gi = ad["gate_idx"]
             if gi < 0:
                 continue
-            if ad["state"] == "queuing" and agent.model.desired_speed < 0.1:
+            if ad["state"] == "queuing" and get_agent_speed(agent) < 0.1:
                 if not gate_occupied[gi]:
-                    agent.model.desired_speed = ad["original_speed"]
+                    set_agent_speed(agent, ad["original_speed"])
                     ad["state"] = "flowing"
 
         # ── 안전장치 ──
@@ -680,8 +677,8 @@ def run_simulation():
                 continue
             age = current_time - ad["spawn_time"]
             if age > STUCK_TIMEOUT and ad["gate_idx"] >= 0:
-                if agent.model.desired_speed < 0.1:
-                    agent.model.desired_speed = ad["original_speed"]
+                if get_agent_speed(agent) < 0.1:
+                    set_agent_speed(agent, ad["original_speed"])
                     ad["state"] = "flowing"
 
         # ── 경로 변경: Gao (2019) ──
@@ -877,12 +874,12 @@ def create_snapshots(frames, gates, obstacles, gate_openings):
         draw_frame(axes[idx], positions, gates, obstacles, gate_openings, t)
         axes[idx].set_title(f't = {target_t}s ({len(positions)} agents)',
                             fontsize=12, fontweight='bold')
-    fig.suptitle('성수역 서쪽 대합실 v8 (GCFM)',
+    fig.suptitle('성수역 서쪽 대합실 (CFSM V2)',
                  fontsize=16, fontweight='bold')
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "snapshots_v8.png", dpi=150, bbox_inches='tight')
+    fig.savefig(OUTPUT_DIR / "snapshots_cfsm.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_v8.png'}")
+    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_cfsm.png'}")
 
 
 def create_gif(frames, gates, obstacles, gate_openings):
@@ -896,11 +893,11 @@ def create_gif(frames, gates, obstacles, gate_openings):
     def animate(i):
         t, positions = target_frames[i]
         draw_frame(ax, positions, gates, obstacles, gate_openings, t)
-        ax.set_title(f'성수역 서쪽 v8 (GCFM) | t = {t:.1f}s | {len(positions)} agents',
+        ax.set_title(f'성수역 서쪽 (CFSM V2) | t = {t:.1f}s | {len(positions)} agents',
                      fontsize=12, fontweight='bold')
 
     anim = FuncAnimation(fig, animate, frames=len(target_frames), interval=200)
-    gif_path = OUTPUT_DIR / "simulation_v8.gif"
+    gif_path = OUTPUT_DIR / "simulation_cfsm.gif"
     anim.save(str(gif_path), writer=PillowWriter(fps=5), dpi=100)
     plt.close(fig)
     print(f"  GIF: {gif_path}")
@@ -920,13 +917,13 @@ def plot_queue_history(queue_history):
         train_t += TRAIN_INTERVAL
     ax.set_xlabel('시간 (초)')
     ax.set_ylabel('게이트 앞 대기 인원 (명)')
-    ax.set_title('게이트별 대기 인원 변화 (v8 GCFM)')
+    ax.set_title('게이트별 대기 인원 변화 (CFSM V2)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "queue_history_v8.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "queue_history_cfsm.png", dpi=150)
     plt.close(fig)
-    print(f"  대기열: {OUTPUT_DIR / 'queue_history_v8.png'}")
+    print(f"  대기열: {OUTPUT_DIR / 'queue_history_cfsm.png'}")
 
 
 def plot_service_time_dist(service_times):
@@ -938,13 +935,13 @@ def plot_service_time_dist(service_times):
                label=f'평균: {np.mean(service_times):.2f}s')
     ax.set_xlabel('서비스 시간 (초)')
     ax.set_ylabel('빈도')
-    ax.set_title('개찰구 서비스 시간 분포 (v8 GCFM)')
+    ax.set_title('개찰구 서비스 시간 분포 (CFSM V2)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "service_time_v8.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "service_time_cfsm.png", dpi=150)
     plt.close(fig)
-    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_v8.png'}")
+    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_cfsm.png'}")
 
 
 # =============================================================================
@@ -952,7 +949,7 @@ def plot_service_time_dist(service_times):
 # =============================================================================
 def evaluate_simulation(stats, spawned_count, sim_time):
     print("\n" + "=" * 60)
-    print("시뮬레이션 평가 결과 (v8 GCFM)")
+    print("시뮬레이션 평가 결과 (CFSM V2)")
     print("=" * 60)
 
     total_passed = sum(stats["gate_counts"])
