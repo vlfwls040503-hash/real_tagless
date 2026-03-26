@@ -287,8 +287,11 @@ def get_agent_speed(agent):
 def create_simulation():
     gates = calculate_gate_positions()
 
-    # CFSM V2 기하구조: 배리어 포함 (물리적 벽)
-    walkable, _, _ = build_geometry(gates, include_barrier=True)
+    # 기하구조: 배리어 미포함 (소프트웨어 게이트 제어)
+    # 물리적 벽 대신 속도 제어 + 점유 관리로 1인 1게이트 구현
+    # (AnyLogic Service Point 방식: 게이트는 서비스 포인트, 물리적 벽이 아님)
+    walkable, _, _ = build_geometry(gates, include_barrier=False)
+    # 시각화용: 배리어 표시
     _, vis_obstacles, gate_openings = build_geometry(gates, include_barrier=True)
 
     # CFSM V2 — 반발력 파라미터는 에이전트별 설정 (모델 자체는 파라미터 없음)
