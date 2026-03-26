@@ -1,7 +1,7 @@
 """
 V&V (Verification & Validation) Flow Chart
 Based on NIST Technical Note 1822 (Ronchi et al., 2013)
-Adapted for: Tagless Gate Pedestrian Simulation (JuPedSim GCFM)
+Adapted for: Tagless Gate Pedestrian Simulation (JuPedSim CFSM V2)
 
 Reference:
   - Ronchi, E., Kuligowski, E.D., Reneke, P.A., Peacock, R.D., Nilsson, D. (2013)
@@ -78,13 +78,13 @@ def create_flowchart():
     # =========================================================================
     y0 = 24.5
     draw_box(ax, 8, y0, 5.5, 0.9,
-             'Phase 0: Model Selection\nGCFM (Chraibi et al., 2010)',
+             'Phase 0: Model Selection\nCFSM V2 (Tordeux et al., 2016)',
              '#E8F5E9', fontsize=10, bold=True)
 
     draw_bracket_text(ax, 11.5, y0 + 0.2, [
         'Selection criteria:',
-        '  - Force-based: natural queuing',
-        '  - Elliptical body: directional',
+        '  - Velocity-based: collision-free',
+        '  - No oscillation at narrow gates',
         '  - Gate bottleneck suitability',
     ])
 
@@ -172,7 +172,7 @@ def create_flowchart():
     ax.text(11, y_dec1 + 0.25, 'FAIL', fontsize=8, color='red', fontweight='bold')
 
     draw_box(ax, 15.5, y_dec1, 2.5, 0.8,
-             'Adjust GCFM\nparameters', '#FFCDD2', fontsize=8)
+             'Adjust CFSM V2\nparameters', '#FFCDD2', fontsize=8)
     # Loop back arrow
     ax.annotate('', xy=(15.5, y_an + 0.35), xytext=(15.5, y_dec1 + 0.4),
                 arrowprops=dict(arrowstyle='->', color='red', lw=1.2,
@@ -336,7 +336,7 @@ def create_flowchart():
 
     # Reference
     ax.text(8, -0.7,
-            'Reference: Ronchi et al. (2013) NIST TN 1822; ISO 20414:2020; Chraibi et al. (2010)',
+            'Reference: Ronchi et al. (2013) NIST TN 1822; ISO 20414:2020; Tordeux et al. (2016)',
             fontsize=8, ha='center', color='#999999')
 
     fig.savefig(OUTPUT_DIR / 'vv_flowchart.png', dpi=200, bbox_inches='tight',
