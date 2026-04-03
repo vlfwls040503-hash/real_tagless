@@ -105,7 +105,7 @@ CHOICE_DIST_1ST = 9.0   # 계단 직후 선택 (x~3~4에서 발동) -> 처음부
 CHOICE_DIST_2ND = 1.7   # 조건부 재선택 (대기열 3명+ 일 때만)
 
 # 대기열 내 재선택 (LRP)
-QUEUE_RESELECT_ENABLED = True   # 대기 중 게이트 변경 가능
+QUEUE_RESELECT_ENABLED = False  # 대기열 진입 후 게이트 확정
 QUEUE_RESELECT_INTERVAL = 1.0   # 재선택 판단 주기 (초)
 QUEUE_RESELECT_MIN_QUEUE = 3    # 현재 큐 최소 인원 (이상일 때만 재선택 고려)
 QUEUE_RESELECT_MIN_DIFF = 2     # 새 큐가 이만큼 짧아야 이동
@@ -240,8 +240,10 @@ def choose_gate_lrp(rng, agent_pos, agent_speed, temperament, gates,
                 return candidates[0][1]
         return current_gate_idx if current_gate_idx is not None else 0
 
+    # y거리 가중치: 횡단(y이동)은 직진(x이동)보다 심리적 비용이 큼
+    Y_WEIGHT = 2.5
     l1_actual = np.array([
-        np.hypot(agent_pos[0] - g["x"], agent_pos[1] - g["y"])
+        np.hypot(agent_pos[0] - g["x"], (agent_pos[1] - g["y"]) * Y_WEIGHT)
         for g in gates
     ])
     l1_est = estimate_distances_with_order_preservation(rng, l1_actual)
