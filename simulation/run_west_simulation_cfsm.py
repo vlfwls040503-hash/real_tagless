@@ -103,7 +103,7 @@ GATE_PASS_SPEED = 0.65
 GATE_PHYS_LENGTH = 1.4
 
 TAGLESS_SERVICE_TIME = 1.2    # 게이트 물리 통과 시간 (1.5m / 1.3m/s)
-TAGLESS_RATIO = 0.0           # 기본 시나리오: 태그리스 0%
+TAGLESS_RATIO = 1.0           # 시나리오: 태그리스 100%
 
 # =============================================================================
 # 게이트 선택 모델: Gao (2019) LRP
@@ -766,17 +766,21 @@ def run_simulation():
             for a in sim.agents():
                 ad = agent_data.get(a.id, {})
                 s = "passed" if ad.get("serviced") else "approach"
-                frame_data.append((a.position[0], a.position[1], s))
+                tl = ad.get("is_tagless", False)
+                frame_data.append((a.position[0], a.position[1], s, tl))
 
             # 소프트웨어 큐 에이전트 (수학적 대기 위치)
             for gi in range(N_GATES):
                 gate_y = gates[gi]["y"]
                 for j, qaid in enumerate(sw_queue[gi]):
                     qx = QUEUE_HEAD_X - j * QUEUE_SPACING
-                    frame_data.append((qx, gate_y, "queue"))
+                    tl = agent_data.get(qaid, {}).get("is_tagless", False)
+                    frame_data.append((qx, gate_y, "queue", tl))
                 # 서비스 중 에이전트 (게이트 head에 표시)
                 if gate_service[gi] is not None and "agent_id" in gate_service[gi]:
-                    frame_data.append((GATE_X - 0.1, gate_y, "service"))
+                    svc_aid = gate_service[gi]["agent_id"]
+                    tl = agent_data.get(svc_aid, {}).get("is_tagless", False)
+                    frame_data.append((GATE_X - 0.1, gate_y, "service", tl))
 
             video_frames.append((current_time, frame_data))
 
@@ -886,6 +890,13 @@ STATE_COLORS = {
     "service":  "#C62828",
     "passed":   "#1565C0",
 }
+# 태그리스 에이전트 색상 (밝은 계열)
+TAGLESS_COLORS = {
+    "approach": "#00BFA5",
+    "queue":    "#FFD600",
+    "service":  "#FF6D00",
+    "passed":   "#00BFA5",
+}
 
 
 def draw_frame(ax, positions, gates, obstacles, gate_openings, time_sec):
@@ -937,7 +948,12 @@ def draw_frame(ax, positions, gates, obstacles, gate_openings, time_sec):
             hatch='///', alpha=0.4))
 
     if positions:
-        if len(positions[0]) == 3:
+        if len(positions[0]) >= 4:
+            # (x, y, state, is_tagless) 4튜플
+            xs = [p[0] for p in positions]
+            ys = [p[1] for p in positions]
+            cs = [TAGLESS_COLORS.get(p[2], "#00BFA5") if p[3] else STATE_COLORS.get(p[2], "#1565C0") for p in positions]
+        elif len(positions[0]) == 3:
             xs = [p[0] for p in positions]
             ys = [p[1] for p in positions]
             cs = [STATE_COLORS.get(p[2], "#1565C0") for p in positions]
