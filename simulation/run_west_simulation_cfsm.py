@@ -102,8 +102,8 @@ CARD_FEEDING_TIME = 1.1
 GATE_PASS_SPEED = 0.65
 GATE_PHYS_LENGTH = 1.4
 
-TAGLESS_SERVICE_TIME = 0.0
-TAGLESS_RATIO = 0.2
+TAGLESS_SERVICE_TIME = 1.2    # 게이트 물리 통과 시간 (1.5m / 1.3m/s)
+TAGLESS_RATIO = 1.0           # 전체 태그리스
 
 # =============================================================================
 # 게이트 선택 모델: Gao (2019) LRP
@@ -538,7 +538,7 @@ def run_simulation():
         for gi in range(N_GATES):
             n_q = len(sw_queue[gi])
             if n_q == 0:
-                queue_tail_snap.append(QUEUE_HEAD_X - 2.0)  # 빈 큐: 2m 앞에서 흡수
+                queue_tail_snap.append(QUEUE_HEAD_X - 0.5)  # 빈 큐: 0.5m 앞에서 흡수
             else:
                 queue_tail_snap.append(QUEUE_HEAD_X - n_q * QUEUE_SPACING - 0.3)
 
@@ -616,38 +616,12 @@ def run_simulation():
             if sw_queue[gi]:
                 head_aid = sw_queue[gi].pop(0)
                 ad = agent_data[head_aid]
-                if ad["is_tagless"]:
-                    # 태그리스: 즉시 통과 (서비스 시간 0)
-                    gate_y = gates[gi]["y"]
-                    try:
-                        new_aid = sim.add_agent(
-                            jps.CollisionFreeSpeedModelV2AgentParameters(
-                                journey_id=post_journey_ids[gi],
-                                stage_id=post_gate_wp_ids[gi],
-                                position=(GATE_X + GATE_LENGTH + 0.3, gate_y),
-                                time_gap=CFSM_TIME_GAP,
-                                desired_speed=ad["original_speed"],
-                                radius=CFSM_RADIUS,
-                                strength_neighbor_repulsion=8.0,
-                                range_neighbor_repulsion=0.1,
-                                strength_geometry_repulsion=5.0,
-                                range_geometry_repulsion=0.02,
-                            ))
-                        agent_data[new_aid] = ad
-                        ad["serviced"] = True
-                        passed_agents.add(head_aid)
-                        stats["service_times"].append(0.0)
-                        stats["gate_counts"][gi] += 1
-                    except Exception:
-                        pass
-                    gate_service[gi] = {"clearing": True, "clear_start": current_time}
-                else:
-                    # 태그: 서비스 시작
-                    gate_service[gi] = {
-                        "agent_id": head_aid,
-                        "start": current_time,
-                        "duration": ad["service_time"],
-                    }
+                # 태그/태그리스 공통: 서비스 시작 (서비스 시간은 sample_service_time에서 결정)
+                gate_service[gi] = {
+                    "agent_id": head_aid,
+                    "start": current_time,
+                    "duration": ad["service_time"],
+                }
 
         # ── 대기열 내 LRP 재선택 ──
         if QUEUE_RESELECT_ENABLED and step % int(QUEUE_RESELECT_INTERVAL / DT) == 0:
