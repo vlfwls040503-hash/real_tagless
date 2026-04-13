@@ -489,15 +489,22 @@ def run_simulation():
             temperament = assign_temperament(rng)
             is_tagless = rng.random() < TAGLESS_RATIO
 
-            # 예상 큐 길이 = 현재 큐 + 해당 게이트로 향하는 중인 에이전트 수
-            # (다른 보행자가 어느 게이트로 가는지 관찰하여 예측)
+            # 예상 큐 = 현재 큐 + 시야 내(앞쪽 8m) 다른 보행자가 향하는 게이트 카운트
+            # 유한 시야 가정: Moussaïd et al. (2011) 기반
+            VISION_RANGE = 8.0
             gate_queue = [len(q) for q in sw_queue]
-            for _ad in agent_data.values():
-                if _ad.get("serviced") or _ad.get("queued"):
+            _my_x = stair["x"]  # 계단 위치 기준 (spawn 직전)
+            for _other in sim.agents():
+                _oad = agent_data.get(_other.id, {})
+                if _oad.get("serviced") or _oad.get("queued"):
                     continue
-                _gi = _ad.get("gate_idx", -1)
-                if _gi >= 0:
-                    gate_queue[_gi] += 1
+                _ogi = _oad.get("gate_idx", -1)
+                if _ogi < 0:
+                    continue
+                _ox = _other.position[0]
+                # 내 앞쪽(+x) + 8m 이내만 관찰
+                if _my_x < _ox < _my_x + VISION_RANGE:
+                    gate_queue[_ogi] += 1
 
             spawned = False
             for retry in range(5):

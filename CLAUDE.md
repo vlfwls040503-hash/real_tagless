@@ -258,6 +258,29 @@ if new_depth != cur_depth:  # < 가 아니라 !=
 **값**: `SIM_TIME = 120.0` (열차 1편 처리 분량)
 **이유**: MP4는 120초까지만 렌더링 → 그 이후 시뮬은 불필요.
 
+### 13. 유한 시야 기반 예측 큐 (2026-04-13)
+**위치**: spawn 시 `gate_queue` 계산
+```python
+VISION_RANGE = 8.0  # 앞쪽 8m만 관찰 가능 (Moussaïd 2011 기반 유한 시야)
+_my_x = stair["x"]
+for _other in sim.agents():
+    _oad = agent_data.get(_other.id, {})
+    if _oad.get("serviced") or _oad.get("queued"):
+        continue
+    _ogi = _oad.get("gate_idx", -1)
+    if _ogi < 0:
+        continue
+    _ox = _other.position[0]
+    if _my_x < _ox < _my_x + VISION_RANGE:
+        gate_queue[_ogi] += 1
+```
+**이유**: #9 예측 큐는 무한 시야(전체 에이전트 관찰)였음. 현실은 시야 제한.
+- 내 **앞쪽(+x)** 8m 이내만 관찰
+- 뒤에 있거나 멀리 있는 에이전트는 모름
+**근거**: Moussaïd et al. (2011) "How simple rules determine pedestrian behavior"
+**효과**: #9와 유사한 분산 효과 유지하면서 현실성 ↑ (게이트별 편차 2로 동일)
+**증상 (되돌릴 경우)**: 비현실적으로 완벽한 예측 → 논문 공격 포인트.
+
 ---
 
 ## 핵심 파라미터 (run_west_simulation_cfsm.py)
