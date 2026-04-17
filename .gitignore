@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
 .env
+
+# 개인 촬영 영상
+KakaoTalk_*.mp4
+개찰구 촬영 영상/
+
+# Blender 렌더 결과물 (대용량, 미완)
+output/blender_frames/
+output/blender_3d*.mp4
+output/blender_test.png

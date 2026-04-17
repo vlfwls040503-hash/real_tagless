@@ -99,6 +99,19 @@ analyze_trajectories.py
   [분석] 궤적 자동 품질 감지
   - 역행, 정체, 밀집, y가로지름 자동 검출
   - 파라미터 튜닝 시 자동 실행
+
+run_west_simulation_cfsm_escalator.py
+  [실험] 에스컬레이터 하류 병목 추가 버전 (2026-04-17)
+  - run_west_simulation_cfsm.py 기반 복사본, 원본 비손상
+  - EXITS 폭 3m → 1m (실제 에스컬레이터 폭)
+  - exit_stage 제거 → escalator_wp (waypoint) + dummy_exit
+  - 에스컬레이터 소프트웨어 큐: CFSM off-on 재활용, 서비스 시간 0.85s (1.17 ped/s 목표)
+  - 시야 기반 대기 로직: busy 측 wp 반경 1.2m 이내 + 전방 60° 콘 + wp 거리 FIFO
+  - front-most 에이전트 면제 (멈춤 탈출), 반응 주기 매 2스텝
+
+seongsu_west_escalator.py
+  [실험] 에스컬레이터 버전 기하 (EXITS 폭 1m, STRUCTURES는 원본과 동일)
+  - plot_station/build_geometry 에 visible 플래그 지원 (숨겨진 장애물용)
 ```
 
 ### output/ (시뮬레이션 결과)
@@ -120,6 +133,27 @@ verification/                   <- V&V 검증 결과
 서울교통공사_역별 시간대별 승하차인원(24.1~24.12).csv
 서울교통공사_1_8호선 개집표기 시설물 현황_20250311.csv
 fzj/seyfried2005_single_file.txt   <- FZJ 기본다이어그램 실측
+```
+
+### docs/ (연구 설계·선행연구 — 2026-04-17 재정립)
+```
+연구설계_v2.md             <- RQ 재정립, 공간 범위, 통행비용 함수 3후보
+선행연구_축A.md            <- 다구간 역사 보행 시뮬
+선행연구_축B.md            <- 병목 전이 / 다운스트림 혼잡
+선행연구_축C.md            <- 통행비용 함수 / LOS 가중
+선행연구_축D.md            <- 기존 7절 선행연구 검증
+선행연구_암묵적병목.md      <- CFSM/AVM 계보, 암묵적 혼잡 14편
+시뮬_확장성_검토.md        <- 현 코드 분석 + JuPedSim/PedPy/transp-or 재평가
+vv_framework.md            <- V&V (유지)
+```
+
+### experiments/escalator_convergence_test/ (에스컬레이터 병목 실험)
+```
+scenario_setup.py          <- 10m×10m + 3m 통로 최소 재현
+metrics.py                 <- 진동/역행/밀도 4개 지표
+run_experiments.py         <- 13 전략 × 3 rate × 3 seed 일괄 러너
+results/summary.json       <- 전략별 지표 수치
+baseline_metrics.md, strategy_comparison.md, recommendation.md
 ```
 
 ## 절대 되돌리면 안 되는 수정 (DO NOT REVERT)
@@ -288,12 +322,23 @@ QUEUE_RESELECT_ENABLED = False  # 큐 내 jockeying 금지
 ## 시뮬레이션 실행
 ```bash
 cd ~/tagless
-python simulation/run_west_simulation_cfsm.py   # 메인 (단방향)
-python simulation/verify_cfsm_basic.py           # V&V 검증
-python simulation/analyze_trajectories.py        # 궤적 자동 분석
-python simulation/compare_scenarios.py           # 시나리오 비교
-python simulation/calibrate_cfsm.py              # FZJ 보정
+python simulation/run_west_simulation_cfsm.py             # 메인 (단방향)
+python simulation/run_west_simulation_cfsm_escalator.py   # 하류 병목 실험용 (2026-04-17)
+python simulation/verify_cfsm_basic.py                    # V&V 검증
+python simulation/analyze_trajectories.py                 # 궤적 자동 분석
+python simulation/compare_scenarios.py                    # 시나리오 비교
+python simulation/calibrate_cfsm.py                       # FZJ 보정
 ```
+
+## 에스컬레이터 병목 구현 메모 (2026-04-17)
+
+- **기각된 접근**: 깔때기 벽(funnel) — 실제 성수역 기하에 없음. 시뮬 수렴 트릭에 그침.
+- **기각된 접근**: 난간 벽 — 동일 이유 + 과도한 물리 제약.
+- **기각된 접근**: 밀도 기반 desired_speed — 진동 원인은 속도 아닌 방향 불안정 (CFSM 등방성).
+- **채택된 접근**: 시야 기반 대기 (전방 60° 콘) + 소프트웨어 큐 + front-most 면제 + busy 측 국지화.
+- **AVM 교체 보류**: 전체 시뮬 V&V 재수행 부담. 후속 과제.
+- **현 실효 처리율**: upper 0.68 / lower 0.65 ped/s (목표 1.17 ped/s)
+- **참고 문헌**: `docs/선행연구_암묵적병목.md` (Xu 2021 AVM, Rzezonka 2022 등 14편)
 
 ## Git 설정
 - GitHub: https://github.com/vlfwls040503-hash/tagless
