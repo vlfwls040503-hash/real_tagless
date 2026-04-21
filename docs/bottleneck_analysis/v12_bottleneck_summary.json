@@ -1,0 +1,31 @@
+{
+  "v12_throughput": {
+    "upper": {
+      "n_arrivals": 73,
+      "mean_gap": 0.9819444444444443,
+      "median_gap": 0.8999999999999915,
+      "effective_rate_ped_per_s": 1.1111111111111216,
+      "median_gap_ss": 0.9000000000000057,
+      "rate_ss": 1.111111111111104
+    },
+    "lower": {
+      "n_arrivals": 58,
+      "mean_gap": 1.2789473684210524,
+      "median_gap": 0.9000000000000057,
+      "effective_rate_ped_per_s": 1.111111111111104,
+      "median_gap_ss": 1.0,
+      "rate_ss": 1.0
+    }
+  },
+  "julich_4D090_throughput": {
+    "n_passages": 129,
+    "mean_gap": 0.55625,
+    "median_gap_ss": 0.5599999999999987,
+    "rate_ped_per_s_ss": 1.7857142857142898
+  },
+  "v12_peak_density_upper": 0.6666666666666666,
+  "v12_peak_density_lower": 0.6666666666666666,
+  "julich_peak_density": 7.333333333333333,
+  "target_rate_ped_per_s": 1.17,
+  "gap_ped_per_s": 0.05888888888888699
+}

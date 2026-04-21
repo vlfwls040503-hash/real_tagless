@@ -1,104 +1,92 @@
 """
 성수역 2F 대합실 서쪽 절반 (50m × 25m) - JuPedSim 기하구조
-AnyLogic 도면 기반 좌표 변환
 
-좌표계:
-  x = 동서방향 (흐름방향: 계단→게이트→출구), 0=왼쪽
-  y = 남북방향, 0=아래쪽
+★ 좌표는 docs/space_layout.py 의 SPACE dict에서 import.
+   공간 수정 시 이 파일이 아니라 SPACE dict를 수정할 것.
 
-흐름: 계단(빨강, x≈3) → 게이트(초록, x≈12) → 출구(파랑, x≈27)
+흐름: 계단(빨강, x≈3) → 게이트(초록, x≈12) → 에스컬(파랑, x≈27)
 """
 
+import sys
+import pathlib
 import numpy as np
 from shapely import Polygon
 from shapely.ops import unary_union
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+# SPACE 단일 진실 원천 import
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from docs.space_layout import SPACE
+
 plt.rcParams['font.family'] = 'Malgun Gothic'
 plt.rcParams['axes.unicode_minus'] = False
 
 # =============================================================================
-# 1. 대합실 치수
+# Public 상수 (SPACE에서 derive — 외부 모듈 import 호환 유지)
 # =============================================================================
-CONCOURSE_LENGTH = 50.0   # x방향 (m)
-CONCOURSE_WIDTH = 25.0    # y방향 (m)
+CONCOURSE_LENGTH = SPACE["concourse"]["length"]
+CONCOURSE_WIDTH = SPACE["concourse"]["width"]
+NOTCH_X = SPACE["concourse"]["notch"]["x"]
+NOTCH_Y = SPACE["concourse"]["notch"]["y"]
 
-# 상단 왼쪽 계단실 들여쓰기 (도면의 L자형 벽)
-NOTCH_X = 12.0   # 들여쓰기 끝 x
-NOTCH_Y = 22.0   # 들여쓰기 높이
+GATE_X = SPACE["gate_params"]["x"]
+GATE_LENGTH = SPACE["gate_params"]["length"]
+GATE_PASSAGE_WIDTH = SPACE["gate_params"]["passage_width"]
+GATE_HOUSING_WIDTH = SPACE["gate_params"]["housing_width"]
+N_GATES = SPACE["gate_params"]["n_gates"]
+BARRIER_Y_BOTTOM = SPACE["gate_params"]["barrier_y_bottom"]
+BARRIER_Y_TOP = SPACE["gate_params"]["barrier_y_top"]
 
-# =============================================================================
-# 2. 게이트 규격
-# =============================================================================
-GATE_X = 12.0              # 게이트 배리어 시작 x좌표
-GATE_LENGTH = 1.5          # 게이트 통과 길이 (x방향)
-GATE_PASSAGE_WIDTH = 0.55  # 일반 게이트 통로 폭 (y방향)
-GATE_HOUSING_WIDTH = 0.30  # 게이트 사이 칸막이 폭 (y방향)
-N_GATES = 7
-
-# 게이트 배리어가 차지하는 y범위
-BARRIER_Y_BOTTOM = 3.0
-BARRIER_Y_TOP = 22.0
-
-# =============================================================================
-# 3. 계단 (보행자 출발 통로, 2026-04-18 공간 확장 v4)
-# 대합실 = 승강장 2D 겹침. 계단은 가로 통로로 표현 (x=1~11, 10m).
-# spawn: x_end (x=11, 승강장쪽 끝) → 계단 내부 x↓ → x_start (x=1, 연결부)
-# 'x' 필드는 하위 호환 (= x_start)
-# =============================================================================
+# STAIRS: SPACE 형태 → 기존 형태(x 필드 하위호환) 변환
 STAIRS = [
-    {"id": "upper", "x": 1.0, "x_start": 1.0, "x_end": 11.0,
-     "y_start": 15.0, "y_end": 18.0},
-    {"id": "lower", "x": 1.0, "x_start": 1.0, "x_end": 11.0,
-     "y_start": 8.0,  "y_end": 11.0},
+    {"id": st["id"], "x": st["x_start"],
+     "x_start": st["x_start"], "x_end": st["x_end"],
+     "y_start": st["y_start"], "y_end": st["y_end"]}
+    for st in SPACE["stairs"]
 ]
 
-# =============================================================================
-# 4. 출구 (보행자 도착선)
-# =============================================================================
+# EXITS: 기존 sim runner 호환 — 각 escalator 의 capture_zone 유사 위치
+# (옛 EXITS는 폭 1m, x=27~28, y=24/3 형태였음. 동일 의미로 capture에서 변환)
 EXITS = [
-    {"id": "upper", "x_start": 27.0, "x_end": 28.0, "y": 24.0},
-    {"id": "lower", "x_start": 27.0, "x_end": 28.0, "y": 3.0},
+    {"id": "upper",
+     "x_start": SPACE["escalators"][1]["capture_zone"]["x_range"][0],
+     "x_end":   SPACE["escalators"][1]["capture_zone"]["x_range"][1],
+     "y": 24.0},  # 옛 호환값 (capture의 y_max)
+    {"id": "lower",
+     "x_start": SPACE["escalators"][0]["capture_zone"]["x_range"][0],
+     "x_end":   SPACE["escalators"][0]["capture_zone"]["x_range"][1],
+     "y": 3.0},   # 옛 호환값 (capture의 y_min)
 ]
 
-# =============================================================================
-# 4-b. 에스컬레이터 통로 (2026-04-18 공간 확장)
-# 대합실 북쪽 벽(y=25)에 에스컬 4번(용답), 남쪽 벽(y=0)에 에스컬 1번(뚝섬)
-# 모두 x=25~35 가로 통로, 폭 1m. 입구는 각 (25, 25) / (25, 0).
-# =============================================================================
-ESCALATOR_CORRIDOR_LEN = 10.0   # x 방향 길이 (m)
-ESCALATOR_CORRIDOR_WIDTH = 1.0  # y 방향 폭 (m)
-ESCALATOR_X_START = 25.0
-ESCALATOR_X_END = ESCALATOR_X_START + ESCALATOR_CORRIDOR_LEN  # 35.0
+# 에스컬레이터 통로 좌표 (외곽 polygon 산출용)
+_ESC1 = SPACE["escalators"][0]   # exit1 (남쪽)
+_ESC4 = SPACE["escalators"][1]   # exit4 (북쪽)
+ESCALATOR_X_START = _ESC1["corridor"]["x_range"][0]
+ESCALATOR_X_END   = _ESC1["corridor"]["x_range"][1]
+ESCALATOR_CORRIDOR_LEN = ESCALATOR_X_END - ESCALATOR_X_START
+ESCALATOR_CORRIDOR_WIDTH = (_ESC1["corridor"]["y_range"][1]
+                            - _ESC1["corridor"]["y_range"][0])
 
+# ESCALATORS 리스트 (sim runner 호환)
 ESCALATORS = [
-    # 출구 1번 (뚝섬방면, 남쪽)
-    {"id": "exit1", "direction": "뚝섬",
-     "x_range": (ESCALATOR_X_START, ESCALATOR_X_END),
-     "y_range": (-ESCALATOR_CORRIDOR_WIDTH, 0.0),
-     "entry": (ESCALATOR_X_START, 0.0),
-     "sink_x": ESCALATOR_X_END},
-    # 출구 4번 (용답방면, 북쪽)
-    {"id": "exit4", "direction": "용답",
-     "x_range": (ESCALATOR_X_START, ESCALATOR_X_END),
-     "y_range": (CONCOURSE_WIDTH, CONCOURSE_WIDTH + ESCALATOR_CORRIDOR_WIDTH),
-     "entry": (ESCALATOR_X_START, CONCOURSE_WIDTH),
-     "sink_x": ESCALATOR_X_END},
+    {"id": e["id"], "direction": e["direction"],
+     "x_range": e["corridor"]["x_range"],
+     "y_range": e["corridor"]["y_range"],
+     "entry": e["entry_point"],
+     "sink_x": e["sink_x"]}
+    for e in SPACE["escalators"]
 ]
 
-# =============================================================================
-# 5. 비통행 구조물 (빗금 영역) — 에스컬레이터 난간 포함
-# =============================================================================
-# 에스컬레이터 난간(handrail)은 실존 구조물 (도시철도건설규칙 기준
-# 1,000mm 폭, 난간 높이/두께 포함). 진입부 1m 폭 × 2m 길이 통로로
-# 표현. 통로 내부는 추월 물리적 불가 → 자연 FIFO.
-_HR_TH = 0.05   # 난간 두께
-_HR_LEN = 1.0   # 난간 길이 (진입부 1m)
-
+# 비통행 구조물 (coords 형식 변환)
+def _rect_to_coords(s):
+    x0, x1 = s["x_range"]; y0, y1 = s["y_range"]
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 STRUCTURES = [
-    {"id": "upper_right", "coords": [(30, 16), (48, 16), (48, 24), (30, 24)]},
-    {"id": "lower_right", "coords": [(30, 3),  (48, 3),  (48, 11), (30, 11)]},
+    {"id": s["id"], "coords": _rect_to_coords(s)}
+    for s in SPACE["structures"]
 ]
 
 

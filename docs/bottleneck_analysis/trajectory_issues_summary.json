@@ -1,0 +1,21 @@
+{
+  "역행": {
+    "total_frames": 80132,
+    "backward_frames": 139,
+    "backward_ratio_pct": 0.173463784755154,
+    "severe_backward_agents": 1,
+    "top5_agent_ids": [
+      386
+    ]
+  },
+  "측방향 퍼짐 (approach x=20~26)": {
+    "mean_y_range": 0.12673155775857786,
+    "p90_y_range": 0.21161474736451058,
+    "big_spread_over_2m": 0
+  },
+  "에스컬 진입 꺾임 (x=24~27)": {
+    "sharp_turn_frames_pct": 0.0,
+    "max_turn_mean_deg": 1.3539611042215545,
+    "max_turn_p90_deg": 3.3270065525648898
+  }
+}
