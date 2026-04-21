@@ -125,7 +125,7 @@ SPACE = {
             # 실제 sim에서 agent가 흡수되는 위치 (concourse 내부)
             "capture_zone": {"x_range": (31.5, 33.0), "y_range": (-1.2, 0.0)},
             "waypoint": (32.0, -1.2),            # 접근 wp
-            "service_time": 0.85,               # 흡수 주기 (s)
+            "service_time": 1.7,                # pair 흡수 주기 (s) → 1.17 ped/s (Cheung & Lam)
             "sink_x": 40.0,
         },
         {
@@ -134,7 +134,7 @@ SPACE = {
             "entry_point": (32.0, 25.0),
             "capture_zone": {"x_range": (31.5, 33.0), "y_range": (25.0, 26.2)},
             "waypoint": (32.0, 26.2),
-            "service_time": 0.85,
+            "service_time": 1.7,                # pair 흡수 주기 (s) → 1.17 ped/s
             "sink_x": 40.0,
         },
     ],

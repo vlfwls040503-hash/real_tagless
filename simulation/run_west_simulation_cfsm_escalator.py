@@ -466,17 +466,17 @@ def create_simulation():
     # 슬롯 idx=0이 에스컬 직전(x=24.2), 뒷 슬롯이 서쪽(x-)으로 늘어남
     # 에이전트는 x+ 방향(동쪽)으로 전진하며 capture zone(x=24.5-26) 진입
     # ★ 슬롯을 corridor 내부(y=25-26)에만 배치 → 대합실 통행로와 충돌 방지
-    # 2026-04-22: corridor 1.2m 폭 + 서쪽 연장 (6슬롯 → 12슬롯)
-    # 슬롯 idx=0이 가장 동쪽(에스컬 직전), idx가 클수록 서쪽 (대합실 방향)
-    # 2열 × 6행 = 12슬롯. corridor y=25~26.2 (upper) / y=-1.2~0 (lower)
+    # 2026-04-22: 2열 × 5행 = 10슬롯 (쌍 캡처 방식)
+    # 슬롯 순서: [0,1]=row0(front pair), [2,3]=row1, ..., [8,9]=row4(rear)
+    # 짝수 인덱스 = col A (y=25.4 or -0.8), 홀수 = col B (y=25.8 or -0.4)
+    # 5행 꽉 차면 그 이후는 자유 대기 (stop-and-go)
     _ESC_SLOTS_LOCAL = {
         "upper": [
-            (31.2, 25.4), (31.2, 25.8),
+            (31.2, 25.4), (31.2, 25.8),  # row 0 (front, 먼저 탑승)
             (30.6, 25.4), (30.6, 25.8),
             (30.0, 25.4), (30.0, 25.8),
             (29.4, 25.4), (29.4, 25.8),
-            (28.8, 25.4), (28.8, 25.8),
-            (28.2, 25.4), (28.2, 25.8),
+            (28.8, 25.4), (28.8, 25.8),  # row 4 (rear)
         ],
         "lower": [
             (31.2, -0.8), (31.2, -0.4),
@@ -484,7 +484,6 @@ def create_simulation():
             (30.0, -0.8), (30.0, -0.4),
             (29.4, -0.8), (29.4, -0.4),
             (28.8, -0.8), (28.8, -0.4),
-            (28.2, -0.8), (28.2, -0.4),
         ],
     }
     _ESC_WP_R_LOCAL = 0.28
@@ -596,18 +595,16 @@ def run_simulation():
     STOPPED_SPREAD_R = 3.5      # 시야 로직 적용 외곽 반경 (에스컬 wp 기준)
     # 앞사람이 실제로 느릴 때만 blocked 판정 (cascade 폭주 방지)
     FRONT_SLOW_TH = 0.6         # 앞 agent 속도 이 이하면 "정체 중" 판정 (m/s)
-    # ── 에스컬레이터 소프트웨어 큐 슬롯 정의 ──
-    # 2026-04-22: corridor 1.2m 폭 + 12슬롯 (2열 × 6행, 서쪽으로 연장)
-    # 슬롯 idx=0이 에스컬 직전(x=31.2), idx가 클수록 서쪽 (대합실 방향)
-    # corridor y=25.0~26.2 (upper) / y=-1.2~0.0 (lower) 내부만 사용
+    # ── 에스컬레이터 소프트웨어 큐 슬롯 정의 (2열 × 5행 = 10슬롯, 쌍 캡처) ──
+    # 2026-04-22: 대기행렬 5행 고정. 뒷쪽 agents 는 자유 대기 (stop-and-go)
+    # [slot 0, slot 1] = 쌍 (앞줄) → 에스컬 서비스 1사이클마다 함께 탑승
     ESC_QUEUE_SLOTS = {
         "upper": [
-            (31.2, 25.4), (31.2, 25.8),
+            (31.2, 25.4), (31.2, 25.8),  # row 0 (front pair)
             (30.6, 25.4), (30.6, 25.8),
             (30.0, 25.4), (30.0, 25.8),
             (29.4, 25.4), (29.4, 25.8),
-            (28.8, 25.4), (28.8, 25.8),
-            (28.2, 25.4), (28.2, 25.8),
+            (28.8, 25.4), (28.8, 25.8),  # row 4 (rear)
         ],
         "lower": [
             (31.2, -0.8), (31.2, -0.4),
@@ -615,7 +612,6 @@ def run_simulation():
             (30.0, -0.8), (30.0, -0.4),
             (29.4, -0.8), (29.4, -0.4),
             (28.8, -0.8), (28.8, -0.4),
-            (28.2, -0.8), (28.2, -0.4),
         ],
     }
     ESC_QUEUE_MAX = len(ESC_QUEUE_SLOTS["upper"])   # 슬롯 수/에스컬
@@ -1017,6 +1013,30 @@ def run_simulation():
                         + (ad["queue_target_x"] - ad["queue_shift_from"]) * eased
                     )
 
+        # ── 에스컬 큐 visual 위치 갱신 (2D ease-in-out) ──
+        ESC_SHIFT_DURATION = 0.8  # 슬롯 이동 시간 (s)
+        for _side in ("upper", "lower"):
+            for _aid in esc_sw_queue[_side]:
+                _ad = agent_data.get(_aid)
+                if _ad is None or _ad.get("esc_shift_start") is None:
+                    continue
+                _elapsed = current_time - _ad["esc_shift_start"]
+                if _elapsed >= ESC_SHIFT_DURATION:
+                    _ad["esc_visual_x"] = _ad["esc_target_x"]
+                    _ad["esc_visual_y"] = _ad["esc_target_y"]
+                    _ad["esc_shift_start"] = None
+                else:
+                    _t = _elapsed / ESC_SHIFT_DURATION
+                    _eased = ease_in_out(_t)
+                    _ad["esc_visual_x"] = (
+                        _ad["esc_shift_from_x"]
+                        + (_ad["esc_target_x"] - _ad["esc_shift_from_x"]) * _eased
+                    )
+                    _ad["esc_visual_y"] = (
+                        _ad["esc_shift_from_y"]
+                        + (_ad["esc_target_y"] - _ad["esc_shift_from_y"]) * _eased
+                    )
+
         # ── 궤적 기록 ──
         if step % traj_interval == 0:
             # 시뮬레이션 내 활성 에이전트
@@ -1036,6 +1056,15 @@ def run_simulation():
                     qx = ad.get("queue_visual_x", QUEUE_HEAD_X - j * QUEUE_SPACING)
                     trajectory_data.append((current_time, qaid, qx, gate_y, gi, "queue"))
 
+            # 에스컬 소프트웨어 큐 에이전트 (visual 위치)
+            for _side in ("upper", "lower"):
+                for _aid in esc_sw_queue[_side]:
+                    _ad = agent_data.get(_aid, {})
+                    _vx = _ad.get("esc_visual_x")
+                    _vy = _ad.get("esc_visual_y")
+                    if _vx is not None and _vy is not None:
+                        trajectory_data.append((current_time, _aid, _vx, _vy, -1, "esc_queue"))
+
         # ── 통계 & 프레임 ──
         if step % int(1.0 / DT) == 0:
             gq = [len(q) for q in sw_queue]
@@ -1043,14 +1072,19 @@ def run_simulation():
 
         if step % frame_interval == 0:
             frame_data = []
-            # 시뮬레이션 내 활성 에이전트
+            # 시뮬레이션 내 활성 에이전트 (JuPedSim 에 남아있는 것만)
             for a in sim.agents():
                 ad = agent_data.get(a.id, {})
-                s = "passed" if ad.get("serviced") else "approach"
+                if ad.get("esc_slot") == "staging":
+                    s = "esc_staging"
+                elif ad.get("serviced"):
+                    s = "passed"
+                else:
+                    s = "approach"
                 tl = ad.get("is_tagless", False)
                 frame_data.append((a.position[0], a.position[1], s, tl))
 
-            # 소프트웨어 큐 에이전트 (시각화 위치 = visual_x, ease 적용)
+            # 게이트 소프트웨어 큐 에이전트 (시각화 위치 = visual_x, ease 적용)
             for gi in range(N_GATES):
                 gate_y = gates[gi]["y"]
                 for j, qaid in enumerate(sw_queue[gi]):
@@ -1063,6 +1097,17 @@ def run_simulation():
                     svc_aid = gate_service[gi]["agent_id"]
                     tl = agent_data.get(svc_aid, {}).get("is_tagless", False)
                     frame_data.append((GATE_X - 0.1, gate_y, "service", tl))
+
+            # 에스컬 소프트웨어 큐 에이전트 (visual 위치, 2D ease)
+            for _side in ("upper", "lower"):
+                for _aid in esc_sw_queue[_side]:
+                    _ad = agent_data.get(_aid, {})
+                    _vx = _ad.get("esc_visual_x")
+                    _vy = _ad.get("esc_visual_y")
+                    if _vx is None or _vy is None:
+                        continue
+                    _tl = _ad.get("is_tagless", False)
+                    frame_data.append((_vx, _vy, "esc_queue", _tl))
 
             video_frames.append((current_time, frame_data))
 
@@ -1255,12 +1300,12 @@ def run_simulation():
                 except Exception:
                     pass
 
-        # ② 슬롯 배정: staging 에이전트 → 큐 맨 뒤 슬롯
+        # ② 슬롯 배정: staging 에이전트 → 큐 맨 뒤 슬롯 (게이트 큐와 동일 방식)
+        # JuPedSim 에서 제거 + 가상 slot 위치로 ease-in (시각적 줄서기)
         for _side in ("upper", "lower"):
             _queue = esc_sw_queue[_side]
             if len(_queue) >= ESC_QUEUE_MAX:
                 continue
-            # staging 에이전트 수집 (FIFO: esc_queue_enter 순)
             _staging = sorted(
                 [(_aid, agent_data[_aid]["esc_queue_enter"])
                  for _agent in sim.agents()
@@ -1273,15 +1318,20 @@ def run_simulation():
                 if len(_queue) >= ESC_QUEUE_MAX:
                     break
                 _slot_idx = len(_queue)
+                _slot_x, _slot_y = ESC_QUEUE_SLOTS[_side][_slot_idx]
                 try:
-                    sim.switch_agent_journey(
-                        _aid,
-                        esc_queue_journeys[_side][_slot_idx],
-                        esc_queue_wps[_side][_slot_idx],
-                    )
+                    _cur = sim.agent(_aid).position
                     _queue.append(_aid)
-                    agent_data[_aid]["esc_slot"] = _slot_idx
-                    agent_data[_aid]["esc_advancing"] = True
+                    _ad = agent_data[_aid]
+                    _ad["esc_slot"] = _slot_idx
+                    _ad["esc_visual_x"] = _cur[0]
+                    _ad["esc_visual_y"] = _cur[1]
+                    _ad["esc_shift_from_x"] = _cur[0]
+                    _ad["esc_shift_from_y"] = _cur[1]
+                    _ad["esc_target_x"] = _slot_x
+                    _ad["esc_target_y"] = _slot_y
+                    _ad["esc_shift_start"] = current_time
+                    sim.mark_agent_for_removal(_aid)
                 except Exception:
                     pass
 
@@ -1290,20 +1340,21 @@ def run_simulation():
             _s = escalator_state[_side]
             _queue = esc_sw_queue[_side]
 
-            # 서비스 완료 체크
+            # 서비스 완료 체크 — 직전 사이클에 캡처된 모든 에이전트 (pair) 방출
             if current_time >= _s["busy_until"] and _s["captured"]:
-                _done = _s["captured"].pop(0)
-                stats["escalator_processed"][_side] += 1
+                while _s["captured"]:
+                    _done = _s["captured"].pop(0)
+                    stats["escalator_processed"][_side] += 1
+                    if _done in agent_data:
+                        agent_data[_done]["sink_time"] = current_time
+                        agent_data[_done]["sink_side"] = _side
                 _s["busy_until"] = 0.0
-                if _done in agent_data:
-                    agent_data[_done]["sink_time"] = current_time
-                    agent_data[_done]["sink_side"] = _side
 
-            # 강제 진입: 에스컬 준비 + 큐 비어있을 때 capture zone 내 가장 가까운 에이전트 직접 흡수
+            # 강제 진입: 큐 비었을 때 capture zone 내 가장 가까운 2명(pair) 흡수
             if current_time >= _s["busy_until"] and not _queue:
                 _cz = _cz_u if _side == "upper" else _cz_l
                 _wp_ref = ESC_WP_UPPER if _side == "upper" else ESC_WP_LOWER
-                _closest_id, _closest_d = None, float("inf")
+                _cands = []
                 for _ag in sim.agents():
                     _aad = agent_data.get(_ag.id)
                     if _aad is None or not _aad.get("serviced"):
@@ -1314,48 +1365,44 @@ def run_simulation():
                     if (_cz["x_range"][0] <= _ax <= _cz["x_range"][1] and
                             _cz["y_range"][0] <= _ay <= _cz["y_range"][1]):
                         _d = np.hypot(_ax - _wp_ref[0], _ay - _wp_ref[1])
-                        if _d < _closest_d:
-                            _closest_d, _closest_id = _d, _ag.id
-                if _closest_id is not None:
+                        _cands.append((_d, _ag.id))
+                _cands.sort()
+                _pair_ids = [c[1] for c in _cands[:2]]  # 가장 가까운 2명
+                if _pair_ids:
                     try:
-                        sim.mark_agent_for_removal(_closest_id)
-                        _s["captured"].append(_closest_id)
+                        for _cid in _pair_ids:
+                            sim.mark_agent_for_removal(_cid)
+                            _s["captured"].append(_cid)
+                            agent_data[_cid]["escalator_enter_time"] = current_time
+                            agent_data[_cid]["esc_slot"] = "captured"
                         _s["busy_until"] = current_time + ESCALATOR_SERVICE_TIME
-                        agent_data[_closest_id]["escalator_enter_time"] = current_time
-                        agent_data[_closest_id]["esc_slot"] = "captured"
-                        if _closest_id in _queue:
-                            _queue.remove(_closest_id)
                     except Exception:
                         pass
 
-            # 준비 완료 + 큐 있으면 맨 앞 방출
+            # 준비 완료 + 큐 있으면 앞 2명(pair) 동시 방출 (가상 큐 - mark_for_removal 불필요)
             if current_time >= _s["busy_until"] and _queue:
-                _front = _queue.pop(0)
-                try:
-                    sim.mark_agent_for_removal(_front)
+                _pair_popped = []
+                for _ in range(min(2, len(_queue))):
+                    _pair_popped.append(_queue.pop(0))
+                for _front in _pair_popped:
                     _s["captured"].append(_front)
-                    _s["busy_until"] = current_time + ESCALATOR_SERVICE_TIME
                     if _front in agent_data:
                         agent_data[_front]["escalator_enter_time"] = current_time
                         agent_data[_front]["esc_slot"] = "captured"
-                except Exception as _e:
-                    _queue.insert(0, _front)  # 실패 시 원상 복구
-                    if step % int(5.0 / DT) == 0:
-                        print(f"  [esc {_side}] remove fail: {_e}")
-                    continue
+                _s["busy_until"] = current_time + ESCALATOR_SERVICE_TIME
 
-                # 큐 전진: 각 에이전트를 slot_idx-1 로 이동
+                # 큐 전진: 나머지 agents 의 target slot 을 2칸 앞으로 shift
                 for _new_idx, _aid in enumerate(_queue):
-                    try:
-                        sim.switch_agent_journey(
-                            _aid,
-                            esc_queue_journeys[_side][_new_idx],
-                            esc_queue_wps[_side][_new_idx],
-                        )
-                        agent_data[_aid]["esc_slot"] = _new_idx
-                        agent_data[_aid]["esc_advancing"] = True  # 이동 시작
-                    except Exception:
-                        pass
+                    _ad = agent_data[_aid]
+                    _new_x, _new_y = ESC_QUEUE_SLOTS[_side][_new_idx]
+                    if (abs(_new_x - _ad.get("esc_target_x", _new_x)) > 1e-6 or
+                            abs(_new_y - _ad.get("esc_target_y", _new_y)) > 1e-6):
+                        _ad["esc_shift_from_x"] = _ad.get("esc_visual_x", _new_x)
+                        _ad["esc_shift_from_y"] = _ad.get("esc_visual_y", _new_y)
+                        _ad["esc_target_x"] = _new_x
+                        _ad["esc_target_y"] = _new_y
+                        _ad["esc_shift_start"] = current_time
+                    _ad["esc_slot"] = _new_idx
 
             _s["queue_len"] = len(_queue)
 
@@ -1583,6 +1630,8 @@ STATE_COLORS = {
     "queue":    "#EF6C00",
     "service":  "#C62828",
     "passed":   "#1565C0",
+    "esc_queue":   "#6A1B9A",   # 에스컬 슬롯 배정 (보라)
+    "esc_staging": "#AD1457",   # 에스컬 staging 대기 (자홍)
 }
 # 태그리스 에이전트 색상 (밝은 계열)
 TAGLESS_COLORS = {
@@ -1590,6 +1639,8 @@ TAGLESS_COLORS = {
     "queue":    "#FFD600",
     "service":  "#FF6D00",
     "passed":   "#00BFA5",
+    "esc_queue":   "#CE93D8",
+    "esc_staging": "#F8BBD0",
 }
 
 
