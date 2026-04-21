@@ -587,14 +587,14 @@ def run_simulation():
     # 있고, 그 에이전트가 wp에 더 가까우면 본 에이전트 정지. FIFO 보장.
     ESC_WP_UPPER = tuple(_ESC_UPPER["waypoint"])
     ESC_WP_LOWER = tuple(_ESC_LOWER["waypoint"])
-    ESC_ZONE_R = 1.2            # 에스컬레이터 직근 영향 반경 (m, 축소)
-    VISION_R = 2.5              # 시야 반경 (m) — 큐 간격 자연스럽게
-    VISION_DOT_TH = 0.3         # 전방 시야각 ≈72° (cos72°=0.309)
+    ESC_ZONE_R = 1.2            # 에스컬레이터 직근 영향 반경 (m)
+    VISION_R = 2.5              # 시야 반경 (m)
+    VISION_DOT_TH = 0.64        # 전방 시야각 100° (cos50°=0.643) — 2026-04-22
     ESC_SPEED_STOP = 0.02       # 정지 시 desired_speed (완전 0 금지)
-    # 에스컬 큐 제어 파라미터 (2026-04-20 수정 — FIFO 이진 모드)
-    STOPPED_SPREAD_R = 3.5      # 시야 로직 적용 외곽 반경 (에스컬 wp 기준)
-    # 앞사람이 실제로 느릴 때만 blocked 판정 (cascade 폭주 방지)
-    FRONT_SLOW_TH = 0.6         # 앞 agent 속도 이 이하면 "정체 중" 판정 (m/s)
+    # 에스컬 큐 제어 파라미터
+    STOPPED_SPREAD_R = 8.0      # 시야 로직 적용 반경 (기준: ESC_WP)
+    # 앞사람이 거의 멈춰있을 때만 blocked (앞이 움직이면 나도 움직임)
+    FRONT_SLOW_TH = 0.3         # 앞 agent 속도 이 이하면 정체 판정 (2026-04-22: 0.6→0.3)
     # ── 에스컬레이터 소프트웨어 큐 슬롯 정의 (2열 × 5행 = 10슬롯, 쌍 캡처) ──
     # 2026-04-22: 대기행렬 5행 고정. 뒷쪽 agents 는 자유 대기 (stop-and-go)
     # [slot 0, slot 1] = 쌍 (앞줄) → 에스컬 서비스 1사이클마다 함께 탑승
