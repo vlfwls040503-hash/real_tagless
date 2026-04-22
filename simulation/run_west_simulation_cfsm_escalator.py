@@ -117,7 +117,7 @@ GATE_PASS_SPEED = 0.65
 GATE_PHYS_LENGTH = 1.4
 
 TAGLESS_SERVICE_TIME = 1.2    # 게이트 물리 통과 시간 (1.5m / 1.3m/s)
-TAGLESS_RATIO = 1.0           # 시나리오: 태그리스 100%
+TAGLESS_RATIO = 1.0           # 단일 sim 기본값 (배치는 scenario_matrix가 override)
 
 # =============================================================================
 # 게이트 선택 모델: Gao (2019) LRP
@@ -167,7 +167,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # 배치 런 파라미터 (batch_runner가 monkey-patch, 기본값은 기존 동작 유지)
 # =============================================================================
 BATCH_SEED = 42                          # rng 시드
-BATCH_TAGLESS_ONLY_GATES = frozenset()   # 태그리스 전용 게이트 idx. 나머지는 태그 전용
+BATCH_TAGLESS_ONLY_GATES = frozenset()   # 단일 sim 기본값 (배치는 scenario_matrix가 override)
                                          # 비어있으면 기존 동작 (모든 게이트 공용)
 BATCH_OUTPUT_SUFFIX = ""                 # 출력 파일 suffix (배치 시 시나리오 id)
 BATCH_METRICS_OUT = None                 # pathlib.Path — per-agent CSV 저장 경로
@@ -692,23 +692,37 @@ def run_simulation():
                 if _my_x < _ox < _my_x + VISION_RANGE:
                     gate_queue[_ogi] += 1
 
+            # ★ 2026-04-22: spawn y 를 목표 게이트 y에 비례 배치 (동선 교차 완화)
+            # 1) 계단 중앙 기준 LRP 1회 호출 → 목표 게이트 결정
+            # 2) 게이트 y 를 stair y 범위로 선형 매핑 → spawn y 결정
+            stair_center_x = stair["x"] + 1.5
+            stair_center_y = (stair["y_start"] + stair["y_end"]) / 2
+            gate_idx = choose_gate_lrp(
+                rng, (stair_center_x, stair_center_y), desired_speed, temperament,
+                gates, gate_queue, stage="1st")
+            choice_stage = 1
+            _depth = min(len(sw_queue[gate_idx]), MAX_QUEUE_DEPTH_WP)
+            jid = journey_grid[gate_idx][_depth]
+            sid = approach_wp_grid[gate_idx][_depth]
+
+            # 게이트 y 범위 -> stair y 범위 선형 매핑
+            _gy_min = min(g["y"] for g in gates)
+            _gy_max = max(g["y"] for g in gates)
+            _gy = gates[gate_idx]["y"]
+            _norm = (_gy - _gy_min) / (_gy_max - _gy_min) if _gy_max > _gy_min else 0.5
+            _stair_yspan = stair["y_end"] - stair["y_start"]
+            spawn_y_target = stair["y_start"] + _norm * _stair_yspan
+
             spawned = False
             for retry in range(5):
                 spawn_x = stair["x"] + rng.uniform(0.5, 2.5)
-                spawn_y = rng.uniform(stair["y_start"], stair["y_end"])
+                # spawn_y: 목표 게이트 y 매핑 + 작은 노이즈
+                spawn_y = spawn_y_target + rng.uniform(-0.3, 0.3)
+                spawn_y = np.clip(spawn_y, stair["y_start"], stair["y_end"])
                 if retry > 0:
                     spawn_x += rng.uniform(0.5, 2.0)
-                    spawn_y += rng.uniform(-1.0, 1.0)
-                    spawn_y = np.clip(spawn_y, 2.0, NOTCH_Y - 2.0)
-
-                # spawn 시 LRP 1회 강제 결정 (재선택 없음)
-                gate_idx = choose_gate_lrp(
-                    rng, (spawn_x, spawn_y), desired_speed, temperament,
-                    gates, gate_queue, stage="1st")
-                choice_stage = 1
-                _depth = min(len(sw_queue[gate_idx]), MAX_QUEUE_DEPTH_WP)
-                jid = journey_grid[gate_idx][_depth]
-                sid = approach_wp_grid[gate_idx][_depth]
+                    spawn_y += rng.uniform(-0.4, 0.4)
+                    spawn_y = np.clip(spawn_y, stair["y_start"], stair["y_end"])
 
                 try:
                     agent_id = sim.add_agent(

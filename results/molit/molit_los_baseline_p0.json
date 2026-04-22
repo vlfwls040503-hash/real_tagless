@@ -1,0 +1,7 @@
+{
+  "p=0_baseline": true,
+  "config_p": 0.0,
+  "config_train_interval": 150.0,
+  "config_train_alighting": 200,
+  "config_sim_time": 300.0
+}

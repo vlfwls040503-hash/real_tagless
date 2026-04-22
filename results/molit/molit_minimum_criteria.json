@@ -1,0 +1,21 @@
+{
+  "criteria": {
+    "los_e_threshold": 2.0,
+    "los_d_threshold": 1.0,
+    "source": "국토부 고시 제2025-241호 표 2.3 (보행로)",
+    "zone_classification": "대합실=보행공간, Z2=대기공간"
+  },
+  "100_scenarios": {
+    "total": 20,
+    "los_e_satisfied": 19,
+    "los_d_satisfied": 7
+  },
+  "baseline_p0": {
+    "z4b_avg": 1.6022222222222227,
+    "z4b_avg_los": "E",
+    "z4b_max": 4.766666666666667,
+    "z4b_max_los": "F",
+    "los_d_violation_avg": true,
+    "los_e_violation_avg": false
+  }
+}
