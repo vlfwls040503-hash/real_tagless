@@ -1,0 +1,33 @@
+메인 시뮬레이션 스크립트 선정 로그
+========================================
+
+[후보]
+1. simulation/run_west_simulation_cfsm.py
+   - 커밋: 2026-04-13 22:44:40 "유한 시야(8m) 기반 예측 큐 적용"
+   - 라인수: 1327
+   - CFSM: O, LRP(MNL): O, 성수역 geometry: O (seongsu_west.py)
+   - TAGLESS_RATIO 모듈 상수: O
+   - 에스컬레이터 없음
+
+2. simulation/run_west_simulation_cfsm_20260413.py
+   - 커밋: 2026-04-13 22:44:40 (1번과 동일 스냅샷)
+   - 1번과 내용 동일 (날짜스탬프 백업)
+
+3. simulation/run_west_simulation_cfsm_escalator.py   ← 선정
+   - 커밋: 2026-04-22 20:07:51 "tune: 태그리스 서비스시간 0s (즉시 통과)"
+   - 라인수: 2027
+   - CFSM: O, LRP(MNL): O, 성수역 geometry: O (seongsu_west_escalator.py)
+   - TAGLESS_RATIO 모듈 상수: O
+   - 에스컬레이터 하류 병목 + zone density + v4 geometry 포함 (가장 완성도 높음)
+   - batch monkey-patch 인터페이스 구비 (BATCH_SAVE_TRAJECTORY, BATCH_TRAJECTORY_OUT 등)
+
+[선정 근거]
+- 가장 최근 커밋 (2026-04-22 vs 2026-04-13)
+- 가장 완성도 높은 메인 시나리오 러너 (line 2027, 기능 다수)
+- 기하구조 v4 (에스컬레이터 돌출 + 계단 가로통로 포함) → 시각화 풍부함
+- spec 요구: JuPedSim CFSM + MNL 게이트 선택 + 성수역 geometry + TAGLESS_RATIO 파라미터 모두 충족
+
+[패치 내역]
+- trajectory_data append 3곳 + CSV writer header 1곳에 is_tagless 컬럼 추가
+  (원본은 time/agent_id/x/y/gate_idx/state 6컬럼 → 7컬럼 is_tagless 추가)
+- 수정 파일: simulation/run_west_simulation_cfsm_escalator.py

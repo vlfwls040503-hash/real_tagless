@@ -1060,7 +1060,7 @@ def run_simulation():
                 ad = agent_data.get(aid, {})
                 gi = ad.get("gate_idx", -1)
                 state = "passed" if ad.get("serviced") else "moving"
-                trajectory_data.append((current_time, aid, px, py, gi, state))
+                trajectory_data.append((current_time, aid, px, py, gi, state, int(ad.get("is_tagless", 0))))
 
             # 소프트웨어 큐 내 에이전트 (시각화 위치 = visual_x)
             for gi in range(N_GATES):
@@ -1068,7 +1068,7 @@ def run_simulation():
                 for j, qaid in enumerate(sw_queue[gi]):
                     ad = agent_data.get(qaid, {})
                     qx = ad.get("queue_visual_x", QUEUE_HEAD_X - j * QUEUE_SPACING)
-                    trajectory_data.append((current_time, qaid, qx, gate_y, gi, "queue"))
+                    trajectory_data.append((current_time, qaid, qx, gate_y, gi, "queue", int(ad.get("is_tagless", 0))))
 
             # 에스컬 소프트웨어 큐 에이전트 (visual 위치)
             for _side in ("upper", "lower"):
@@ -1077,7 +1077,7 @@ def run_simulation():
                     _vx = _ad.get("esc_visual_x")
                     _vy = _ad.get("esc_visual_y")
                     if _vx is not None and _vy is not None:
-                        trajectory_data.append((current_time, _aid, _vx, _vy, -1, "esc_queue"))
+                        trajectory_data.append((current_time, _aid, _vx, _vy, -1, "esc_queue", int(_ad.get("is_tagless", 0))))
 
         # ── 통계 & 프레임 ──
         if step % int(1.0 / DT) == 0:
@@ -1617,7 +1617,7 @@ def run_simulation():
         import csv
         with open(BATCH_TRAJECTORY_OUT, "w", newline="", encoding="utf-8") as _f:
             _w = csv.writer(_f)
-            _w.writerow(["time", "agent_id", "x", "y", "gate_idx", "state"])
+            _w.writerow(["time", "agent_id", "x", "y", "gate_idx", "state", "is_tagless"])
             _w.writerows(trajectory_data)
         print(f"  [배치] trajectory -> {BATCH_TRAJECTORY_OUT} "
               f"({len(trajectory_data)} rows)")

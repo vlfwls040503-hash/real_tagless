@@ -1,0 +1,27 @@
+시나리오 설정 (Scenario Configuration)
+========================================
+대상: 성수역 서쪽 2F 대합실 (50m×25m → 코드 기하: 32m×25m)
+목적: 태그리스 과도기 보행 시뮬레이션 3D 시각화 (발표용)
+
+[변수]
+TAGLESS_RATIO (p)           = 0.5          # 태그리스 이용률 (spec 기본값)
+BATCH_TAGLESS_ONLY_GATES    = frozenset()  # 코드 기본값 = 전용 게이트 없음 (모든 게이트 공용)
+SIM_TIME                    = 120.0 s      # 코드 기본값 (열차 1편 + 큐 처리 여유)
+BATCH_SEED                  = 42           # 기본 시드
+DT                          = 0.05 s       # 시뮬레이션 스텝
+N_GATES                     = 7            # 게이트 수
+
+[게이트 시각 구분]
+- 시뮬레이션: 모든 게이트 공용 (코드 기본값 준수)
+- 시각화: 발표용 색상 구분을 위해 gate idx 0~3 = tag(노랑), 4~6 = tagless(청록)
+  ※ 이 구분은 시각화 전용 convention이며 시뮬레이션 로직에는 영향 없음
+
+[제외 사항 (spec)]
+- 겸용/전용 운영 분리 실험 (BATCH_TAGLESS_ONLY_GATES override) 사용 안 함
+- 첨두/비첨두 시간대 분리 안 함
+
+[물리 엔진]
+- JuPedSim CollisionFreeSpeedModelV2 (Tordeux et al., 2016)
+- 게이트 선택: Gao et al. (2019) LRP (로짓 루트선택 = MNL 계열)
+- 서비스 시간: Gao (2019) lognormal (tag); 0s (tagless 즉시 통과)
+- 소프트웨어 FIFO 큐 + 에스컬레이터 슬롯 (v7, 2026-04-22)
