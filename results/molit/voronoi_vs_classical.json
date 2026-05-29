@@ -1,0 +1,18 @@
+{
+  "Z3B (exit1 대기)": {
+    "area": 21.0,
+    "classical_mean": 0.15497651870928647,
+    "classical_max": 0.5238095238095238,
+    "voronoi_mean": 0.06738901065585479,
+    "voronoi_max": 0.24949321247270007,
+    "n_frames": 943
+  },
+  "Z4B (exit4 대기)": {
+    "area": 20.999999999999996,
+    "classical_mean": 0.268494672524365,
+    "classical_max": 0.5714285714285715,
+    "voronoi_mean": 0.14145892619663378,
+    "voronoi_max": 0.3428618438708803,
+    "n_frames": 943
+  }
+}

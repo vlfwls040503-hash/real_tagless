@@ -1,0 +1,52 @@
+[
+  {
+    "T": 0.6,
+    "V3_mean_err": 22.38,
+    "V3_per_width": {
+      "0.6": null,
+      "0.8": null,
+      "1.0": null
+    },
+    "V3_pass": false
+  },
+  {
+    "T": 0.7,
+    "V3_mean_err": 10.44,
+    "V3_per_width": {
+      "0.6": null,
+      "0.8": null,
+      "1.0": null
+    },
+    "V3_pass": false
+  },
+  {
+    "T": 0.8,
+    "V3_mean_err": 3.5,
+    "V3_per_width": {
+      "0.6": 6.6,
+      "0.8": 1.2,
+      "1.0": 2.7
+    },
+    "V3_pass": true
+  },
+  {
+    "T": 0.9,
+    "V3_mean_err": 9.18,
+    "V3_per_width": {
+      "0.6": 13.4,
+      "0.8": 7.6,
+      "1.0": 6.6
+    },
+    "V3_pass": false
+  },
+  {
+    "T": 1.0,
+    "V3_mean_err": 16.91,
+    "V3_per_width": {
+      "0.6": 20.3,
+      "0.8": 15.7,
+      "1.0": 14.7
+    },
+    "V3_pass": false
+  }
+]
