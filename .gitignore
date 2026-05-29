@@ -6,7 +6,26 @@ __pycache__/
 KakaoTalk_*.mp4
 개찰구 촬영 영상/
 
-# Blender 렌더 결과물 (대용량, 미완)
+# 대용량 영상 출력물
+output/*.mp4
+output/*.avi
+
+# 시뮬레이션 raw CSV (대용량, 재현 가능)
+results/raw/
+
+# 영상 추적 데이터 (대용량)
+영상데이터/tracks_full.csv
+영상데이터/tracks_60s.csv
+영상데이터/*.mp4
+
+# Jülich 캘리브레이션 런 데이터
+data/julich/calibration_runs/
+
+# LLM 패키지
+data_package_for_llm.zip
+data_package_for_llm/
+
+# Blender 렌더 결과물
 output/blender_frames/
 output/blender_3d*.mp4
 output/blender_test.png

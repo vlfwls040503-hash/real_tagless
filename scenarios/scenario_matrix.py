@@ -22,13 +22,15 @@
 
 N_GATES = 7
 
-P_LEVELS = [0.1, 0.3, 0.5, 0.7, 0.8]
-CONFIG_LEVELS = [1, 2, 3, 4, 5, 6]   # 2026-04-22 확장: cfg5(5개), cfg6(6개)
+P_LEVELS = [0.10, 0.30, 0.80]
+CONFIG_LEVELS = [1, 2, 4]
 SEEDS = [42, 43, 44, 45, 46]
 
 # v2: 대칭 배합 (중앙 G4 기준)
+# cfg0 = baseline (전용 게이트 X, 모두 공용)
 # cfg7 = 모든 게이트 태그리스 → 태그 사용자 처리 불가로 제외
 TAGLESS_ONLY_BY_CONFIG = {
+    0: frozenset(),                          # baseline (분리 X)
     1: frozenset({3}),                       # G4
     2: frozenset({2, 4}),                    # G3,G5
     3: frozenset({2, 3, 4}),                 # G3,G4,G5

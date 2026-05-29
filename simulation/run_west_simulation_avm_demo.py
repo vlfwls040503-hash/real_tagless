@@ -1,8 +1,11 @@
 """
-성수역 서쪽 대합실 보행자 시뮬레이션 — CFSM V2 (소프트웨어 큐 기반)
+성수역 서쪽 대합실 보행자 시뮬레이션 — AVM 데모 버전 (CFSM 코드 복사)
 
-v8 (GCFM) -> CFSM -> software queue 재구현:
-  물리 엔진: CollisionFreeSpeedModelV2 (Tordeux et al., 2016)
+원본: run_west_simulation_cfsm_escalator.py (V&V 통과 안정 버전)
+변경점: 물리 엔진만 AVM으로 교체. 나머지 큐/capture/FIFO 로직 동일.
+
+  물리 엔진: AnticipationVelocityModel (Xu et al. 2021) — 데모, V&V 미실행
+  원본 엔진: CollisionFreeSpeedModelV2 (Tordeux et al., 2016)
   - 속도 기반 모델 (힘 기반이 아님) -> 계산 효율 UP
   - 충돌 없는 경로 예측 -> 좁은 통로 자연 통과
 
@@ -57,7 +60,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # =============================================================================
 # 시뮬레이션 파라미터
 # =============================================================================
-SIM_TIME = 300.0  # p=0.7 cfg1 장기 정체 시각화 (batch 와 동일 조건)
+SIM_TIME = 300.0  # 열차 1편 + 큐 처리 여유 (영상과 동일)
 DT = 0.05
 
 # =============================================================================
@@ -72,8 +75,8 @@ PLATFORM_LENGTH = 105.0       # 승강장 길이 (m)
 ALIGHTING_DELAY_MAX = 10.0    # 하차 지연 최대 (s)
 STAIR_DESCENT_TIME = 12.0     # 계단 하행 시간 (s) — ~10m, 0.85m/s
 STAIR_TO_GATE_DIST = 11.0     # 계단 하부 → 게이트 구간 거리 (m)
-WALK_SPEED_MEAN = 1.20        # 한국 도시철도 통근자 표준 (서울교통공사 환승소요시간 기준)
-WALK_SPEED_STD = 0.20         # 한국화로 분산 약간 축소
+WALK_SPEED_MEAN = 1.34        # 플랫폼 보행속도 평균 (m/s)
+WALK_SPEED_STD = 0.26         # 플랫폼 보행속도 표준편차 (m/s)
 FIRST_TRAIN_TIME = 5.0
 
 # 계단 방출율 (Weidmann 1993: 1.25명/s/m, 하행)
@@ -84,13 +87,12 @@ STAIR_CAPACITY = STAIR_WIDTH * STAIR_DISCHARGE_RATE  # ~4.6명/s per stair
 # =============================================================================
 # 보행자 속도 파라미터
 # =============================================================================
-# N(1.20, 0.20), clip(0.8, 2.0)
-# 근거: 서울교통공사 환승소요시간 기준 1.2 m/s, KOTI/국토부 환승편의시설 동일.
-# 한국인 자유보행 1.29 m/s (이창희·김대현 2020) 보다 통근자 시설 내 표준이 더 낮음.
-# Weidmann (1993) 1.34 m/s 는 서양 기준 — 한국 도시철도 약간 과대.
+# N(1.34, 0.26), clip(0.8, 2.0)
+# 근거: Weidmann (1993) 평균 1.34 m/s, std 약 0.26.
+# 한국 지하철 실측(서울교통공사·혼잡도 관측) 범위 0.8~2.0 m/s 부합.
 # Agent별 속성으로 spawn 시 1회 고정 (이후 상수 유지).
-PED_SPEED_MEAN = 1.20
-PED_SPEED_STD = 0.20
+PED_SPEED_MEAN = 1.34
+PED_SPEED_STD = 0.26
 PED_SPEED_MIN = 0.8
 PED_SPEED_MAX = 2.0
 
@@ -110,15 +112,15 @@ DENSITY_R = 2.0         # 밀도 측정 반경 (m)
 # =============================================================================
 # 서비스 시간 파라미터 (Gao et al., 2019)
 # =============================================================================
-SERVICE_TIME_MEAN = 2.7        # 태그: 평균 2.7s (Beijing 실측 + 한국 플랩식, lognormal)
-SERVICE_TIME_MIN = 1.0
-SERVICE_TIME_MAX = 5.0
+SERVICE_TIME_MEAN = 2.0
+SERVICE_TIME_MIN = 0.8
+SERVICE_TIME_MAX = 3.7
 CARD_FEEDING_TIME = 1.1
 GATE_PASS_SPEED = 0.65
 GATE_PHYS_LENGTH = 1.4
 
-TAGLESS_SERVICE_TIME = 1.2    # 태그리스: 물리 통과시간 (1.5m / 1.3m/s, Weidmann 기반)
-TAGLESS_RATIO = 0.5           # 단일 sim 기본값 (배치는 scenario_matrix가 override)
+TAGLESS_SERVICE_TIME = 1.2    # 게이트 물리 통과 시간 (1.5m / 1.3m/s)
+TAGLESS_RATIO = 1.0           # 시나리오: 태그리스 100%
 
 # =============================================================================
 # 게이트 선택 모델: Gao (2019) LRP
@@ -168,7 +170,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # 배치 런 파라미터 (batch_runner가 monkey-patch, 기본값은 기존 동작 유지)
 # =============================================================================
 BATCH_SEED = 42                          # rng 시드
-BATCH_TAGLESS_ONLY_GATES = frozenset({2, 3, 4})   # cfg3: G3, G4, G5 태그리스 전용
+BATCH_TAGLESS_ONLY_GATES = frozenset()   # 태그리스 전용 게이트 idx. 나머지는 태그 전용
                                          # 비어있으면 기존 동작 (모든 게이트 공용)
 BATCH_OUTPUT_SUFFIX = ""                 # 출력 파일 suffix (배치 시 시나리오 id)
 BATCH_METRICS_OUT = None                 # pathlib.Path — per-agent CSV 저장 경로
@@ -178,6 +180,7 @@ BATCH_ZONE_SAMPLE_INTERVAL = 5.0         # zone density 샘플링 간격 (s)
 BATCH_SAVE_TRAJECTORY = False            # True: 배치 모드에도 trajectory CSV 저장
 BATCH_TRAJECTORY_INTERVAL = 0.5          # trajectory 샘플링 간격 (s, downsample)
 BATCH_TRAJECTORY_OUT = None              # pathlib.Path — trajectory CSV 경로
+BATCH_ESC_SERVICE_TIME = None            # 에스컬 처리시간 override (None = SPACE 값 사용)
 
 # 배치 오버라이드 가능 상수 (기본값은 그대로)
 # TAGLESS_RATIO, SIM_TIME, TRAIN_INTERVAL, TRAIN_ALIGHTING는 이미 module-level
@@ -355,22 +358,8 @@ def create_simulation():
     # 시각화용: 실제 규격 (1.5m 두께, 0.55m 통로)
     _, vis_obstacles, gate_openings = build_geometry(gates, include_barrier=True)
 
-    # ── 에스컬레이터 접근 깔때기 (invisible geometry) ──
-    # 시각화에 표시 안 되지만 물리적으로 보행 경로를 좁힘.
-    # 목적: x+ 방향 과도한 군집 방지 + 에스컬 앞 대기공간 압축
-    # 2026-04-22: 채널 벽 제거. 게이트→에스컬 자연 대각선 경로 복원.
-    # 코리도 동측 캡만 유지 (큐가 에스컬 동쪽으로 확산되지 않도록)
-    from shapely.geometry import Polygon as _Poly
-    _funnel_polys = [
-        _Poly([(35.0, 25.0), (40.0, 25.0), (40.0, 26.2), (35.0, 26.2)]),
-        _Poly([(35.0, -1.2), (40.0, -1.2), (40.0,  0.0), (35.0,  0.0)]),
-    ]
-    for _fp in _funnel_polys:
-        if _fp.is_valid and _fp.area > 0:
-            walkable = walkable.difference(_fp)
-
     # CFSM V2
-    model = jps.CollisionFreeSpeedModelV2()
+    model = jps.AnticipationVelocityModel()
     sim = jps.Simulation(model=model, geometry=walkable, dt=DT)
 
     gate_x_end = GATE_X + GATE_LENGTH
@@ -396,42 +385,28 @@ def create_simulation():
         wp_id = sim.add_waypoint_stage((gate_x_end + 0.5, g["y"]), 0.5)
         post_gate_wp_ids.append(wp_id)
 
-    # 에스컬레이터 진입 waypoint — capture zone 동쪽 끝 내부
-    # 2026-04-22: 에스컬 위치 +5m 이동 + corridor 1.2m 폭
-    escalator_wp_upper = sim.add_waypoint_stage((33.0, 25.6), 0.3)
-    escalator_wp_lower = sim.add_waypoint_stage((33.0, -0.6), 0.3)
-
-    # 2026-04-22: 중간 waypoint 단일화 — 에스컬 직전 1개 목적지
-    # 게이트→이 waypoint 로 직접 이동 (자연 대각선 경로)
-    # 위치: corridor 진입 직전, 경계벽 관통 없이 slot 도달 가능한 (28.5, 24.5) / (28.5, 0.5)
-    esc_approach_upper = sim.add_waypoint_stage((28.5, 24.5), 0.60)
-    esc_approach_lower = sim.add_waypoint_stage((28.5,  0.5), 0.60)
-    # bridge = approach (같은 위치 — transition 호환성 유지용)
-    esc_bridge_upper = esc_approach_upper
-    esc_bridge_lower = esc_approach_lower
+    # 에스컬레이터 진입 waypoint (SPACE에서 읽음)
+    # v3+: SPACE["escalators"][i]["waypoint"] 사용 → corridor 입구 (x방향 진입)
+    escalator_wp_upper = sim.add_waypoint_stage(_ESC_UPPER["waypoint"], 0.3)
+    escalator_wp_lower = sim.add_waypoint_stage(_ESC_LOWER["waypoint"], 0.3)
 
     # Dummy exit stage (JuPedSim journey는 보통 마지막에 exit_stage 필요)
     # walkable 내 멀리 떨어진 구석에 배치 — escalator_wp fixed_transition 으로
     # 넘어가면 그쪽으로 이동하나, Python 로직이 escalator_wp 근처에서
     # 에이전트를 remove 하므로 실제 도달 불가.
-    # 2026-04-22: structures x 이동(+5)에 맞춰 dummy_exit도 유효 walkable 내로
     dummy_exit = sim.add_exit_stage(Polygon([
-        (34.5, 12.0), (35.0, 12.0), (35.0, 13.0), (34.5, 13.0),
+        (49.5, 12.0), (50.0, 12.0), (50.0, 13.0), (49.5, 13.0),
     ]))
 
-    # 접근 Journey: 큐 깊이별 동적 waypoint → post_gate → esc_approach → escalator_wp → dummy_exit
-    # esc_approach는 corridor 입구 직전 정렬점 (부채꼴 축소)
+    # 접근 Journey: 큐 깊이별 동적 waypoint → post_gate → escalator_wp → dummy_exit
     journey_grid = []
     for i, g in enumerate(gates):
-        is_upper = g["y"] > CONCOURSE_WIDTH / 2
-        approach_wp = esc_approach_upper if is_upper else esc_approach_lower
-        target_wp = escalator_wp_upper if is_upper else escalator_wp_lower
+        target_wp = escalator_wp_upper if g["y"] > CONCOURSE_WIDTH / 2 else escalator_wp_lower
         gate_jids = []
         for depth in range(MAX_QUEUE_DEPTH_WP + 1):
             wp_id = approach_wp_grid[i][depth]
             journey = jps.JourneyDescription([
                 wp_id, post_gate_wp_ids[i],
-                esc_approach_upper, esc_approach_lower,
                 escalator_wp_upper, escalator_wp_lower, dummy_exit
             ])
             journey.set_transition_for_stage(
@@ -439,65 +414,27 @@ def create_simulation():
                 jps.Transition.create_fixed_transition(post_gate_wp_ids[i]))
             journey.set_transition_for_stage(
                 post_gate_wp_ids[i],
-                jps.Transition.create_fixed_transition(approach_wp))
-            # approach_wp 도달 → (대기, Python 큐가 슬롯 배정)
+                jps.Transition.create_fixed_transition(target_wp))
+            # target_wp (escalator_wp) 는 transition 미설정 — 도달 후 여기 머물며
+            # Python 로직이 remove 타이밍 통제.
             jid = sim.add_journey(journey)
             gate_jids.append(jid)
         journey_grid.append(gate_jids)
     journey_ids = [journey_grid[i][0] for i in range(N_GATES)]
 
-    # Post-gate only Journey: 재투입 에이전트용 (서비스 완료 후 post_gate에서 시작)
+    # Post-gate only Journey: 재투입 에이전트용
     post_journey_ids = []
     for i, g in enumerate(gates):
-        is_upper = g["y"] > CONCOURSE_WIDTH / 2
-        approach_wp = esc_approach_upper if is_upper else esc_approach_lower
+        target_wp = escalator_wp_upper if g["y"] > CONCOURSE_WIDTH / 2 else escalator_wp_lower
         journey = jps.JourneyDescription([
             post_gate_wp_ids[i],
-            esc_approach_upper, esc_approach_lower, dummy_exit
+            escalator_wp_upper, escalator_wp_lower, dummy_exit
         ])
         journey.set_transition_for_stage(
             post_gate_wp_ids[i],
-            jps.Transition.create_fixed_transition(approach_wp))
-        # approach_wp 도달 → Python 큐가 슬롯 배정
+            jps.Transition.create_fixed_transition(target_wp))
         jid = sim.add_journey(journey)
         post_journey_ids.append(jid)
-
-    # 에스컬레이터 소프트웨어 큐 슬롯 waypoint + journey 생성
-    # 각 슬롯 = 하나의 waypoint. 에이전트는 해당 슬롯 journey로 switch_agent_journey 됨.
-    # 슬롯 idx=0이 에스컬 직전(x=24.2), 뒷 슬롯이 서쪽(x-)으로 늘어남
-    # 에이전트는 x+ 방향(동쪽)으로 전진하며 capture zone(x=24.5-26) 진입
-    # ★ 슬롯을 corridor 내부(y=25-26)에만 배치 → 대합실 통행로와 충돌 방지
-    # 2026-04-22: 2열 × 5행 = 10슬롯 (쌍 캡처 방식)
-    # 슬롯 순서: [0,1]=row0(front pair), [2,3]=row1, ..., [8,9]=row4(rear)
-    # 짝수 인덱스 = col A (y=25.4 or -0.8), 홀수 = col B (y=25.8 or -0.4)
-    # 5행 꽉 차면 그 이후는 자유 대기 (stop-and-go)
-    _ESC_SLOTS_LOCAL = {
-        "upper": [
-            (31.2, 25.4), (31.2, 25.8),  # row 0 (front, 먼저 탑승)
-            (30.6, 25.4), (30.6, 25.8),
-            (30.0, 25.4), (30.0, 25.8),
-            (29.4, 25.4), (29.4, 25.8),
-            (28.8, 25.4), (28.8, 25.8),  # row 4 (rear)
-        ],
-        "lower": [
-            (31.2, -0.8), (31.2, -0.4),
-            (30.6, -0.8), (30.6, -0.4),
-            (30.0, -0.8), (30.0, -0.4),
-            (29.4, -0.8), (29.4, -0.4),
-            (28.8, -0.8), (28.8, -0.4),
-        ],
-    }
-    _ESC_WP_R_LOCAL = 0.28
-    esc_queue_wps = {"upper": [], "lower": []}
-    esc_queue_journeys = {"upper": [], "lower": []}
-    for side in ["upper", "lower"]:
-        for pos in _ESC_SLOTS_LOCAL[side]:
-            wp = sim.add_waypoint_stage(pos, _ESC_WP_R_LOCAL)
-            esc_queue_wps[side].append(wp)
-            j = jps.JourneyDescription([wp, dummy_exit])
-            # 전이 없음 → 슬롯 도착 후 대기 (Python 큐가 다음 동작 결정)
-            jid = sim.add_journey(j)
-            esc_queue_journeys[side].append(jid)
 
     # 하위 호환을 위해 exit_upper/exit_lower 이름 보존 (escalator_wp로 alias)
     exit_upper = escalator_wp_upper
@@ -511,8 +448,7 @@ def create_simulation():
             approach_wp_ids, approach_wp_grid, post_gate_wp_ids,
             journey_ids, journey_grid, post_journey_ids,
             default_journey_id, default_stage_id,
-            exit_upper, exit_lower,
-            esc_queue_wps, esc_queue_journeys)
+            exit_upper, exit_lower)
 
 
 # =============================================================================
@@ -521,7 +457,7 @@ def create_simulation():
 def run_simulation():
     print("=" * 60)
     print("성수역 서쪽 대합실 시뮬레이션 (CFSM V2, 소프트웨어 큐)")
-    print(f"  물리 엔진: CollisionFreeSpeedModelV2 (Tordeux et al., 2016)")
+    print(f"  물리 엔진: AnticipationVelocityModel (Xu 2021) - AVM-DEMO")
     print(f"  게이트 통과: 소프트웨어 큐 + 서비스 시간 모델")
     print(f"  게이트 선택: Gao (2019) LRP 모델")
     print(f"  3단계 재선택: {CHOICE_DIST_1ST}m / {CHOICE_DIST_2ND}m / {CHOICE_DIST_3RD}m")
@@ -535,8 +471,7 @@ def run_simulation():
      approach_wp_ids, approach_wp_grid, post_gate_wp_ids,
      journey_ids, journey_grid, post_journey_ids,
      default_journey_id, default_stage_id,
-     exit_upper, exit_lower,
-     esc_queue_wps, esc_queue_journeys) = create_simulation()
+     exit_upper, exit_lower) = create_simulation()
 
     rng = np.random.default_rng(BATCH_SEED)
     total_steps = int(SIM_TIME / DT)
@@ -568,7 +503,9 @@ def run_simulation():
 
     # ── 에스컬레이터 소프트웨어 큐 (SPACE에서 capture zone 읽음) ──
     # 실제 에스컬레이터(30 m/min, 1.0m 폭) 처리율 ≈ 1.17 ped/s (Cheung & Lam 2002)
-    ESCALATOR_SERVICE_TIME = _ESC_LOWER["service_time"]
+    ESCALATOR_SERVICE_TIME = (BATCH_ESC_SERVICE_TIME
+                              if BATCH_ESC_SERVICE_TIME is not None
+                              else _ESC_LOWER["service_time"])
     # Capture zone: (xmin, xmax, ymin, ymax) 튜플
     _cz_u = _ESC_UPPER["capture_zone"]
     _cz_l = _ESC_LOWER["capture_zone"]
@@ -580,55 +517,17 @@ def run_simulation():
         "upper": {"busy_until": 0.0, "captured": [], "queue_len": 0},
         "lower": {"busy_until": 0.0, "captured": [], "queue_len": 0},
     }
-    # 에스컬레이터 소프트웨어 큐 (슬롯 배정된 agent 순서 리스트)
-    esc_sw_queue = {"upper": [], "lower": []}
 
     # ── 시야 기반 대기 로직 (에스컬레이터 존) ──
     # CFSM V2 등방성 한계 보완: 목표 방향 전방 시야 콘 안에 다른 에이전트가
     # 있고, 그 에이전트가 wp에 더 가까우면 본 에이전트 정지. FIFO 보장.
     ESC_WP_UPPER = tuple(_ESC_UPPER["waypoint"])
     ESC_WP_LOWER = tuple(_ESC_LOWER["waypoint"])
-    ESC_ZONE_R = 1.2            # 에스컬레이터 직근 영향 반경 (m)
-    VISION_R = 2.5              # 시야 반경 (m)
-    VISION_DOT_TH = 0.64        # 전방 시야각 100° (cos50°=0.643) — 2026-04-22
+    ESC_ZONE_R = 1.2            # 에스컬레이터 직근 영향 반경 (m, 축소)
+    VISION_R = 1.0              # 시야 반경 (m)
+    VISION_DOT_TH = 0.5         # 전방 60° 콘 (cos60° = 0.5)
     ESC_SPEED_STOP = 0.02       # 정지 시 desired_speed (완전 0 금지)
-    # 에스컬 큐 제어 파라미터
-    STOPPED_SPREAD_R = 8.0      # 시야 로직 적용 반경 (기준: ESC_WP)
-    # 앞사람이 거의 멈춰있을 때만 blocked (앞이 움직이면 나도 움직임)
-    FRONT_SLOW_TH = 0.3         # 앞 agent 속도 이 이하면 정체 판정 (2026-04-22: 0.6→0.3)
-    # ── 에스컬레이터 소프트웨어 큐 슬롯 정의 (2열 × 5행 = 10슬롯, 쌍 캡처) ──
-    # 2026-04-22: 대기행렬 5행 고정. 뒷쪽 agents 는 자유 대기 (stop-and-go)
-    # [slot 0, slot 1] = 쌍 (앞줄) → 에스컬 서비스 1사이클마다 함께 탑승
-    ESC_QUEUE_SLOTS = {
-        "upper": [
-            (31.2, 25.4), (31.2, 25.8),  # row 0 (front pair)
-            (30.6, 25.4), (30.6, 25.8),
-            (30.0, 25.4), (30.0, 25.8),
-            (29.4, 25.4), (29.4, 25.8),
-            (28.8, 25.4), (28.8, 25.8),  # row 4 (rear)
-        ],
-        "lower": [
-            (31.2, -0.8), (31.2, -0.4),
-            (30.6, -0.8), (30.6, -0.4),
-            (30.0, -0.8), (30.0, -0.4),
-            (29.4, -0.8), (29.4, -0.4),
-            (28.8, -0.8), (28.8, -0.4),
-        ],
-    }
-    ESC_QUEUE_MAX = len(ESC_QUEUE_SLOTS["upper"])   # 슬롯 수/에스컬
-    ESC_QUEUE_WP_R = 0.28        # 슬롯 waypoint 캡처 반경
-    ESC_SLOT_STOP_R  = 0.35      # 이 거리 이내면 "슬롯 도착" 판정
-    ESC_V0_DEC_ALPHA = 0.35     # 감속 지수 평활 계수 (빠른 감속)
-    ESC_V0_ACC_ALPHA = 0.20     # 가속 지수 평활 계수 (완만한 출발)
-    # ★ 2026-04-22 FIFO 강화: staging 감지를 approach_wp 위치에서
-    # 게이트에서 자연 대각선 이동 → approach 도달 시 큐 진입 (FIFO)
-    ESC_STAGING_R  = 0.80        # approach_wp 근처 감지 반경
-    ESC_APPROACH_UPPER = (28.5, 24.5)  # approach_wp upper 좌표와 일치
-    ESC_APPROACH_LOWER = (28.5,  0.5)
-    PROX_SCALE_MIN = 0.4        # SPREAD_INNER 지점 속도 스케일 (v0 대비)
-    # 측면 접근 페널티 (Y_WEIGHT 에스컬 버전 — x방향 접근 시 감속)
-    LATERAL_UX_TH = 0.3         # |ux| > 이 값부터 측면 접근 판정
-    LATERAL_PENALTY_MIN = 0.3   # 완전 측면(|ux|=1.0) 시 속도 스케일
+    STOPPED_SPREAD_R = 1.2      # 정지 에이전트 주변 시야 로직 확산 반경 (m)
     STOPPED_SPEED_TH = 0.15     # 이 속도 이하는 "정지"로 판정 (m/s)
 
     # 소프트웨어 큐: 게이트별 FIFO 리스트 (agent_id 저장)
@@ -693,41 +592,27 @@ def run_simulation():
                 if _my_x < _ox < _my_x + VISION_RANGE:
                     gate_queue[_ogi] += 1
 
-            # ★ 2026-04-22: spawn y 를 목표 게이트 y에 비례 배치 (동선 교차 완화)
-            # 1) 계단 중앙 기준 LRP 1회 호출 → 목표 게이트 결정
-            # 2) 게이트 y 를 stair y 범위로 선형 매핑 → spawn y 결정
-            stair_center_x = stair["x"] + 1.5
-            stair_center_y = (stair["y_start"] + stair["y_end"]) / 2
-            gate_idx = choose_gate_lrp(
-                rng, (stair_center_x, stair_center_y), desired_speed, temperament,
-                gates, gate_queue, stage="1st")
-            choice_stage = 1
-            _depth = min(len(sw_queue[gate_idx]), MAX_QUEUE_DEPTH_WP)
-            jid = journey_grid[gate_idx][_depth]
-            sid = approach_wp_grid[gate_idx][_depth]
-
-            # 게이트 y 범위 -> stair y 범위 선형 매핑
-            _gy_min = min(g["y"] for g in gates)
-            _gy_max = max(g["y"] for g in gates)
-            _gy = gates[gate_idx]["y"]
-            _norm = (_gy - _gy_min) / (_gy_max - _gy_min) if _gy_max > _gy_min else 0.5
-            _stair_yspan = stair["y_end"] - stair["y_start"]
-            spawn_y_target = stair["y_start"] + _norm * _stair_yspan
-
             spawned = False
             for retry in range(5):
                 spawn_x = stair["x"] + rng.uniform(0.5, 2.5)
-                # spawn_y: 목표 게이트 y 매핑 + 작은 노이즈
-                spawn_y = spawn_y_target + rng.uniform(-0.3, 0.3)
-                spawn_y = np.clip(spawn_y, stair["y_start"], stair["y_end"])
+                spawn_y = rng.uniform(stair["y_start"], stair["y_end"])
                 if retry > 0:
                     spawn_x += rng.uniform(0.5, 2.0)
-                    spawn_y += rng.uniform(-0.4, 0.4)
-                    spawn_y = np.clip(spawn_y, stair["y_start"], stair["y_end"])
+                    spawn_y += rng.uniform(-1.0, 1.0)
+                    spawn_y = np.clip(spawn_y, 2.0, NOTCH_Y - 2.0)
+
+                # spawn 시 LRP 1회 강제 결정 (재선택 없음)
+                gate_idx = choose_gate_lrp(
+                    rng, (spawn_x, spawn_y), desired_speed, temperament,
+                    gates, gate_queue, stage="1st")
+                choice_stage = 1
+                _depth = min(len(sw_queue[gate_idx]), MAX_QUEUE_DEPTH_WP)
+                jid = journey_grid[gate_idx][_depth]
+                sid = approach_wp_grid[gate_idx][_depth]
 
                 try:
                     agent_id = sim.add_agent(
-                        jps.CollisionFreeSpeedModelV2AgentParameters(
+                        jps.AnticipationVelocityModelAgentParameters(
                             journey_id=jid,
                             stage_id=sid,
                             position=(spawn_x, spawn_y),
@@ -736,8 +621,9 @@ def run_simulation():
                             radius=CFSM_RADIUS,
                             strength_neighbor_repulsion=8.0,
                             range_neighbor_repulsion=0.1,
-                            strength_geometry_repulsion=5.0,
-                            range_geometry_repulsion=0.02,
+                            wall_buffer_distance=0.1,
+                            anticipation_time=1.0,
+                            reaction_time=0.3,
                         ))
                     agent_data[agent_id] = {
                         "gate_idx": gate_idx,
@@ -824,47 +710,31 @@ def run_simulation():
                 if current_time - svc["start"] >= svc["duration"]:
                     aid_done = svc["agent_id"]
                     ad = agent_data[aid_done]
-                    # ★ 2026-04-24: 재투입 실패 방지 — 위치 조정 재시도
-                    # 기존: 단일 위치 (13.5, gate_y) 에서 실패 시 agent 소실
-                    # 개선: post_gate 근처 여러 위치 시도 (x, y 노이즈) + 실패 시 대기
+                    # 게이트 출구에 에이전트 재투입
                     gate_y = gates[gi]["y"]
-                    _reinject_ok = False
-                    _base_x = GATE_X + GATE_LENGTH + 0.3
-                    for _rx in range(6):
-                        _try_x = _base_x + _rx * 0.15   # x 0.15m 간격으로 6회
-                        for _ry_off in [0.0, 0.15, -0.15, 0.25, -0.25]:
-                            _try_y = gate_y + _ry_off
-                            try:
-                                new_aid = sim.add_agent(
-                                    jps.CollisionFreeSpeedModelV2AgentParameters(
-                                        journey_id=post_journey_ids[gi],
-                                        stage_id=post_gate_wp_ids[gi],
-                                        position=(_try_x, _try_y),
-                                        time_gap=CFSM_TIME_GAP,
-                                        desired_speed=ad["original_speed"],
-                                        radius=CFSM_RADIUS,
-                                        strength_neighbor_repulsion=8.0,
-                                        range_neighbor_repulsion=0.1,
-                                        strength_geometry_repulsion=5.0,
-                                        range_geometry_repulsion=0.02,
-                                    ))
-                                # 새 ID 에 기존 데이터 매핑
-                                agent_data[new_aid] = ad
-                                ad["serviced"] = True
-                                passed_agents.add(aid_done)
-                                stats["service_times"].append(svc["duration"])
-                                stats["gate_counts"][gi] += 1
-                                _reinject_ok = True
-                                break
-                            except Exception:
-                                continue
-                        if _reinject_ok:
-                            break
-                    if not _reinject_ok:
-                        # 재투입 모두 실패 → 서비스 상태 유지, 다음 step 재시도
-                        stats.setdefault("reinject_retry", 0)
-                        stats["reinject_retry"] += 1
-                        continue
+                    try:
+                        new_aid = sim.add_agent(
+                            jps.AnticipationVelocityModelAgentParameters(
+                                journey_id=post_journey_ids[gi],
+                                stage_id=post_gate_wp_ids[gi],
+                                position=(GATE_X + GATE_LENGTH + 0.3, gate_y),
+                                time_gap=CFSM_TIME_GAP,
+                                desired_speed=ad["original_speed"],
+                                radius=CFSM_RADIUS,
+                                strength_neighbor_repulsion=8.0,
+                                range_neighbor_repulsion=0.1,
+                                wall_buffer_distance=0.1,
+                                anticipation_time=1.0,
+                                reaction_time=0.3,
+                            ))
+                        # 새 ID에 기존 데이터 매핑
+                        agent_data[new_aid] = ad
+                        ad["serviced"] = True
+                        passed_agents.add(aid_done)
+                        stats["service_times"].append(svc["duration"])
+                        stats["gate_counts"][gi] += 1
+                    except Exception:
+                        pass
                     gate_service[gi] = {"clearing": True, "clear_start": current_time}
                 continue
 
@@ -1045,30 +915,6 @@ def run_simulation():
                         + (ad["queue_target_x"] - ad["queue_shift_from"]) * eased
                     )
 
-        # ── 에스컬 큐 visual 위치 갱신 (2D ease-in-out) ──
-        ESC_SHIFT_DURATION = 0.8  # 슬롯 이동 시간 (s)
-        for _side in ("upper", "lower"):
-            for _aid in esc_sw_queue[_side]:
-                _ad = agent_data.get(_aid)
-                if _ad is None or _ad.get("esc_shift_start") is None:
-                    continue
-                _elapsed = current_time - _ad["esc_shift_start"]
-                if _elapsed >= ESC_SHIFT_DURATION:
-                    _ad["esc_visual_x"] = _ad["esc_target_x"]
-                    _ad["esc_visual_y"] = _ad["esc_target_y"]
-                    _ad["esc_shift_start"] = None
-                else:
-                    _t = _elapsed / ESC_SHIFT_DURATION
-                    _eased = ease_in_out(_t)
-                    _ad["esc_visual_x"] = (
-                        _ad["esc_shift_from_x"]
-                        + (_ad["esc_target_x"] - _ad["esc_shift_from_x"]) * _eased
-                    )
-                    _ad["esc_visual_y"] = (
-                        _ad["esc_shift_from_y"]
-                        + (_ad["esc_target_y"] - _ad["esc_shift_from_y"]) * _eased
-                    )
-
         # ── 궤적 기록 ──
         if step % traj_interval == 0:
             # 시뮬레이션 내 활성 에이전트
@@ -1088,15 +934,6 @@ def run_simulation():
                     qx = ad.get("queue_visual_x", QUEUE_HEAD_X - j * QUEUE_SPACING)
                     trajectory_data.append((current_time, qaid, qx, gate_y, gi, "queue"))
 
-            # 에스컬 소프트웨어 큐 에이전트 (visual 위치)
-            for _side in ("upper", "lower"):
-                for _aid in esc_sw_queue[_side]:
-                    _ad = agent_data.get(_aid, {})
-                    _vx = _ad.get("esc_visual_x")
-                    _vy = _ad.get("esc_visual_y")
-                    if _vx is not None and _vy is not None:
-                        trajectory_data.append((current_time, _aid, _vx, _vy, -1, "esc_queue"))
-
         # ── 통계 & 프레임 ──
         if step % int(1.0 / DT) == 0:
             gq = [len(q) for q in sw_queue]
@@ -1104,19 +941,14 @@ def run_simulation():
 
         if step % frame_interval == 0:
             frame_data = []
-            # 시뮬레이션 내 활성 에이전트 (JuPedSim 에 남아있는 것만)
+            # 시뮬레이션 내 활성 에이전트
             for a in sim.agents():
                 ad = agent_data.get(a.id, {})
-                if ad.get("esc_slot") == "staging":
-                    s = "esc_staging"
-                elif ad.get("serviced"):
-                    s = "passed"
-                else:
-                    s = "approach"
+                s = "passed" if ad.get("serviced") else "approach"
                 tl = ad.get("is_tagless", False)
                 frame_data.append((a.position[0], a.position[1], s, tl))
 
-            # 게이트 소프트웨어 큐 에이전트 (시각화 위치 = visual_x, ease 적용)
+            # 소프트웨어 큐 에이전트 (시각화 위치 = visual_x, ease 적용)
             for gi in range(N_GATES):
                 gate_y = gates[gi]["y"]
                 for j, qaid in enumerate(sw_queue[gi]):
@@ -1129,17 +961,6 @@ def run_simulation():
                     svc_aid = gate_service[gi]["agent_id"]
                     tl = agent_data.get(svc_aid, {}).get("is_tagless", False)
                     frame_data.append((GATE_X - 0.1, gate_y, "service", tl))
-
-            # 에스컬 소프트웨어 큐 에이전트 (visual 위치, 2D ease)
-            for _side in ("upper", "lower"):
-                for _aid in esc_sw_queue[_side]:
-                    _ad = agent_data.get(_aid, {})
-                    _vx = _ad.get("esc_visual_x")
-                    _vy = _ad.get("esc_visual_y")
-                    if _vx is None or _vy is None:
-                        continue
-                    _tl = _ad.get("is_tagless", False)
-                    frame_data.append((_vx, _vy, "esc_queue", _tl))
 
             video_frames.append((current_time, frame_data))
 
@@ -1160,16 +981,6 @@ def run_simulation():
                     n_neighbors = np.sum(dists < DENSITY_R) - 1  # 자기 제외
                     local_density = n_neighbors / (np.pi * DENSITY_R**2)
 
-                    # 에스컬 큐 슬롯 에이전트: 밀집 정렬 time_gap 고정
-                    # (슬롯 간격 0.5m, time_gap=0.20 → 원하는 간격 0.27m < 0.5m → 진동 없음)
-                    _esc_slot = agent_data.get(aid, {}).get("esc_slot")
-                    if isinstance(_esc_slot, int):
-                        try:
-                            sim.agent(aid).model.time_gap = 0.20
-                        except Exception:
-                            pass
-                        continue
-
                     if local_density < 0.5:
                         new_tg = TIME_GAP_LOW
                     elif local_density < 1.5:
@@ -1186,258 +997,148 @@ def run_simulation():
                     except Exception:
                         pass
 
-        # ── 에스컬 큐 에이전트 stop-and-go (지수 평활 가감속) ──
-        # esc_advancing=True  → 새 슬롯으로 이동 중 → v0 target = original_speed
-        # esc_advancing=False → 슬롯 도착 대기   → v0 target = 0
-        # 실제 v0는 지수 평활으로 부드럽게 변화 (JuPedSim 런타임 속성: model.v0)
-        for _agent in sim.agents():
-            _aid = _agent.id
-            _ad = agent_data.get(_aid)
-            if _ad is None or not isinstance(_ad.get("esc_slot"), int):
-                continue
-            _px, _py = _agent.position
-            _side = _ad.get("esc_side", "upper")
-            _sidx = _ad["esc_slot"]
-            _slots = ESC_QUEUE_SLOTS[_side]
-            # 슬롯 도착 감지
-            if _ad.get("esc_advancing", True) and _sidx < len(_slots):
-                _sx, _sy = _slots[_sidx]
-                if np.hypot(_px - _sx, _py - _sy) < ESC_SLOT_STOP_R:
-                    _ad["esc_advancing"] = False
-            # 지수 평활로 v0 조정
-            _target_v0 = _ad["original_speed"] if _ad.get("esc_advancing", True) else 0.0
-            _cur_v0 = _ad.get("_esc_v0", _ad["original_speed"])
-            _alpha = ESC_V0_DEC_ALPHA if _target_v0 < _cur_v0 else ESC_V0_ACC_ALPHA
-            _new_v0 = _cur_v0 + _alpha * (_target_v0 - _cur_v0)
-            if _new_v0 < 0.03:
-                _new_v0 = 0.0
-            _ad["_esc_v0"] = _new_v0
-            try:
-                sim.agent(_aid).model.desired_speed = _new_v0
-            except Exception:
-                pass
-
-        # ── 시야 기반 대기 로직 (에스컬 존, 2스텝마다) ──
-        # serviced 완료 + 슬롯 미배정 에이전트 대상
-        # 전방 72° 콘 안에 wp에 더 가깝고 느린(< FRONT_SLOW_TH) 에이전트 있으면 감속
-        # front-most(wp 가장 가까운) 에이전트는 면제 → 교착 방지
+        # ── 시야 기반 대기 (에스컬레이터 존) ──
+        # busy 상태인 에스컬레이터의 wp 주변 STOPPED_SPREAD_R 안 에이전트에만
+        # 시야 로직 적용. busy 아니면 주변 에이전트 자유 이동.
+        # front-most(wp 가장 가까운)는 면제 → 멈춤 탈출 보장.
         if step % 2 == 0:
-            _approachers = {}
-            for _ag in sim.agents():
-                _aid2 = _ag.id
-                _ad2 = agent_data.get(_aid2)
-                if _ad2 is None or not _ad2.get("serviced"):
-                    continue
-                if isinstance(_ad2.get("esc_slot"), int) or _ad2.get("esc_slot") == "captured":
-                    continue
-                _px2, _py2 = _ag.position
-                _du2 = np.hypot(_px2 - ESC_WP_UPPER[0], _py2 - ESC_WP_UPPER[1])
-                _dl2 = np.hypot(_px2 - ESC_WP_LOWER[0], _py2 - ESC_WP_LOWER[1])
-                _side2 = "upper" if _du2 < _dl2 else "lower"
-                _d_wp2 = _du2 if _side2 == "upper" else _dl2
-                if _d_wp2 > STOPPED_SPREAD_R:
-                    continue
-                _approachers[_aid2] = (_px2, _py2, _side2, _d_wp2)
-            # side별 front-most 면제
-            _front = {}
-            for _s2 in ("upper", "lower"):
-                _cands = [(a, d) for a, (_, _, s, d) in _approachers.items() if s == _s2]
-                if _cands:
-                    _front[_s2] = min(_cands, key=lambda x: x[1])[0]
-            for _aid2, (_px2, _py2, _side2, _d_wp2) in _approachers.items():
-                _wp2 = ESC_WP_UPPER if _side2 == "upper" else ESC_WP_LOWER
-                _ad2 = agent_data[_aid2]
-                if _front.get(_side2) == _aid2:
-                    try:
-                        sim.agent(_aid2).model.desired_speed = _ad2["original_speed"]
-                    except Exception:
-                        pass
-                    continue
-                if _d_wp2 < ESC_ZONE_R:
-                    try:
-                        sim.agent(_aid2).model.desired_speed = ESC_SPEED_STOP
-                    except Exception:
-                        pass
-                    continue
-                _dxw2 = _wp2[0] - _px2; _dyw2 = _wp2[1] - _py2
-                _dw2 = np.hypot(_dxw2, _dyw2)
-                if _dw2 < 0.01:
-                    continue
-                _ux2, _uy2 = _dxw2 / _dw2, _dyw2 / _dw2
-                _blocked2 = False
-                for _oid2, (_ox2, _oy2, _os2, _od_wp2) in _approachers.items():
-                    if _oid2 == _aid2 or _os2 != _side2:
-                        continue
-                    _dist2 = np.hypot(_ox2 - _px2, _oy2 - _py2)
-                    if _dist2 > VISION_R or _dist2 < 0.01:
-                        continue
-                    if (_ux2 * (_ox2 - _px2) + _uy2 * (_oy2 - _py2)) / _dist2 < VISION_DOT_TH:
-                        continue
-                    if _od_wp2 >= _d_wp2:
-                        continue
-                    try:
-                        _ov2 = sim.agent(_oid2).model.desired_speed
-                    except Exception:
-                        _ov2 = 0.0
-                    if _ov2 < FRONT_SLOW_TH:
-                        _blocked2 = True
-                        break
-                try:
-                    _cv2 = sim.agent(_aid2).model.desired_speed
-                    _tv2 = ESC_SPEED_STOP if _blocked2 else _ad2["original_speed"]
-                    _av2 = 0.3 if _tv2 < _cv2 else 0.15
-                    _nv2 = _cv2 + _av2 * (_tv2 - _cv2)
-                    sim.agent(_aid2).model.desired_speed = max(_nv2, ESC_SPEED_STOP if _blocked2 else 0.0)
-                except Exception:
-                    pass
+            busy_upper = current_time < escalator_state["upper"]["busy_until"]
+            busy_lower = current_time < escalator_state["lower"]["busy_until"]
+            live_list = [(a.id, a.position[0], a.position[1]) for a in sim.agents()]
+            if live_list and (busy_upper or busy_lower):
+                pos_arr = np.array([(p[1], p[2]) for p in live_list])
+                aids_arr = [p[0] for p in live_list]
+                d_up = np.hypot(pos_arr[:, 0] - ESC_WP_UPPER[0],
+                                pos_arr[:, 1] - ESC_WP_UPPER[1])
+                d_lo = np.hypot(pos_arr[:, 0] - ESC_WP_LOWER[0],
+                                pos_arr[:, 1] - ESC_WP_LOWER[1])
+                use_upper = d_up < d_lo
+                dist_to_wp = np.where(use_upper, d_up, d_lo)
+                wp_xs = np.where(use_upper, ESC_WP_UPPER[0], ESC_WP_LOWER[0])
+                wp_ys = np.where(use_upper, ESC_WP_UPPER[1], ESC_WP_LOWER[1])
 
-        # ── 에스컬레이터 소프트웨어 큐 관리 ──
-        # ① staging 감지: esc_bridge_wp 근처에 도달한 serviced 에이전트 등록
-        # ② 슬롯 배정: 큐 여유 있으면 staging → 맨 뒤 슬롯으로 switch_agent_journey
-        # ③ capture: 에스컬 준비 완료 + 큐 비어있지 않으면 맨 앞 에이전트 방출
-        # ★ 2026-04-22 역행 방지: 큐 full 시 bridge_wp 접근 에이전트 속도 감속
-        # ① staging 감지 (매 스텝)
-        for _agent in sim.agents():
-            _aid = _agent.id
-            _ad = agent_data.get(_aid)
-            if _ad is None or not _ad.get("serviced") or _ad.get("esc_slot") is not None:
+                # 시야 로직 적용 대상: busy 측 wp 반경 STOPPED_SPREAD_R 안
+                apply_vision = np.zeros(len(aids_arr), dtype=bool)
+                if busy_upper:
+                    apply_vision |= (d_up < STOPPED_SPREAD_R)
+                if busy_lower:
+                    apply_vision |= (d_lo < STOPPED_SPREAD_R)
+
+                # front-most 에이전트 인덱스 (apply_vision 안에서만)
+                up_app_idx = [k for k in range(len(aids_arr))
+                              if use_upper[k] and apply_vision[k]]
+                lo_app_idx = [k for k in range(len(aids_arr))
+                              if not use_upper[k] and apply_vision[k]]
+                front_up = min(up_app_idx, key=lambda k: dist_to_wp[k]) if up_app_idx else None
+                front_lo = min(lo_app_idx, key=lambda k: dist_to_wp[k]) if lo_app_idx else None
+
+                # 시야 로직: apply_vision[k] True인 에이전트에만.
+                vision_blocked_this_step = 0
+                for k, aid in enumerate(aids_arr):
+                    ad = agent_data.get(aid, {})
+                    v0 = ad.get("original_speed", PED_SPEED_MEAN)
+                    px, py = pos_arr[k, 0], pos_arr[k, 1]
+                    if not apply_vision[k]:
+                        new_v = v0
+                    elif k == front_up or k == front_lo:
+                        # front-most: 항상 이동 (멈춤 탈출 보장)
+                        new_v = v0
+                    else:
+                        # 시야 단위벡터
+                        dx = wp_xs[k] - px
+                        dy = wp_ys[k] - py
+                        mag = max(dist_to_wp[k], 1e-6)
+                        ux, uy = dx / mag, dy / mag
+                        blocked = False
+                        for j in range(len(aids_arr)):
+                            if j == k:
+                                continue
+                            rx = pos_arr[j, 0] - px
+                            ry = pos_arr[j, 1] - py
+                            d = np.hypot(rx, ry)
+                            if d < 0.01 or d > VISION_R:
+                                continue
+                            dot = (rx * ux + ry * uy) / d
+                            if dot > VISION_DOT_TH:
+                                if dist_to_wp[j] < dist_to_wp[k]:
+                                    blocked = True
+                                    break
+                        new_v = ESC_SPEED_STOP if blocked else v0
+                        if blocked:
+                            vision_blocked_this_step += 1
+
+                    try:
+                        agent = sim.agent(aid)
+                        agent.model.desired_speed = new_v
+                    except Exception:
+                        pass
+
+                # 30초마다 시야 작동 카운트 출력
+                if step % int(30.0 / DT) == 0 and step > 0:
+                    print(f"    [vision] t={current_time:.0f}s "
+                          f"blocked_this_check={vision_blocked_this_step}")
+
+        # ── 에스컬레이터 capture zone intercept (v4: arrival_time 기반 FIFO) ──
+        # 모든 capture zone 내 agent에 대해 capture_enter_time 기록 (첫 진입 시각)
+        # busy 아닐 때 capture_enter_time 가장 이른 agent 1명 intercept (strict FIFO)
+        for side, zone in [("upper", CAPTURE_UPPER), ("lower", CAPTURE_LOWER)]:
+            s = escalator_state[side]
+            xmin, xmax, ymin, ymax = zone
+
+            # capture zone 내 agent 전수 스캔 → capture_enter_time 기록
+            in_zone_aids = []
+            for agent in sim.agents():
+                px, py = agent.position
+                if xmin <= px <= xmax and ymin <= py <= ymax:
+                    aid = agent.id
+                    ad = agent_data.get(aid)
+                    if ad is None:
+                        continue
+                    if ad.get("capture_enter_time") is None:
+                        ad["capture_enter_time"] = current_time
+                    in_zone_aids.append(aid)
+
+            # 서비스 종료 체크 (한 스텝에 최대 1명 처리 완료)
+            if current_time >= s["busy_until"] and s["captured"]:
+                _done_aid = s["captured"].pop(0)
+                stats["escalator_processed"][side] += 1
+                s["busy_until"] = 0.0
+                if _done_aid in agent_data:
+                    agent_data[_done_aid]["sink_time"] = current_time
+                    agent_data[_done_aid]["sink_side"] = side
+
+            # busy면 intercept 안 함
+            if current_time < s["busy_until"]:
                 continue
-            _px, _py = _agent.position
-            _du = (_px - ESC_APPROACH_UPPER[0])**2 + (_py - ESC_APPROACH_UPPER[1])**2
-            _dl = (_px - ESC_APPROACH_LOWER[0])**2 + (_py - ESC_APPROACH_LOWER[1])**2
-            if _du < ESC_STAGING_R**2 or _dl < ESC_STAGING_R**2:
-                _side = "upper" if _du <= _dl else "lower"
-                _ad["esc_slot"] = "staging"
-                _ad["esc_side"] = _side
-                _ad["esc_queue_enter"] = current_time
 
-        # ★ 역행 방지 + FIFO 강화: staging 에이전트는 큐에 자리 날 때까지 감속
-        # approach_wp에서 staging 감지 → 큐 여유 있으면 즉시 슬롯 배정, 없으면 approach에서 대기
-        # 큐 full or staging 인데 슬롯 못 받은 에이전트는 approach 위치 부근에서 감속
-        for _side in ("upper", "lower"):
-            _queue_full = len(esc_sw_queue[_side]) >= ESC_QUEUE_MAX
-            if not _queue_full:
-                continue  # 슬롯 여유 있으면 자연 흐름
-            for _agent in sim.agents():
-                _aid_h = _agent.id
-                _ad_h = agent_data.get(_aid_h)
-                if _ad_h is None or not _ad_h.get("serviced"):
-                    continue
-                if _ad_h.get("esc_slot") != "staging":
-                    continue
-                if _ad_h.get("esc_side") != _side:
-                    continue
+            # FIFO: capture_enter_time 가장 이른 agent 선택
+            candidate_aid = None
+            if in_zone_aids:
+                in_zone_aids.sort(
+                    key=lambda a: agent_data[a].get("capture_enter_time", 1e9))
+                candidate_aid = in_zone_aids[0]
+                # FIFO violation 검출: 이 agent가 가장 이른 capture_enter인가?
+                # 모든 후보 capture_enter 비교 (이미 정렬됐으니 첫 번째)
+                # violation = (선택된 agent의 capture_enter > 다른 agent의 것)
+                # 정렬 후 첫 번째이므로 violation 없음. 단 동일 시간(tie)는 OK.
+                stats.setdefault("fifo_log", []).append(
+                    (current_time, side, candidate_aid,
+                     agent_data[candidate_aid].get("capture_enter_time"),
+                     [agent_data[a].get("capture_enter_time") for a in in_zone_aids]))
+            if candidate_aid is not None:
                 try:
-                    sim.agent(_aid_h).model.desired_speed = ESC_SPEED_STOP
-                except Exception:
-                    pass
+                    sim.mark_agent_for_removal(candidate_aid)
+                    s["captured"].append(candidate_aid)
+                    s["busy_until"] = current_time + ESCALATOR_SERVICE_TIME
+                    # 배치: 에스컬 capture zone 진입 시각
+                    _cad = agent_data.get(candidate_aid)
+                    if _cad is not None:
+                        _cad["escalator_enter_time"] = current_time
+                except Exception as _e:
+                    if step % int(5.0 / DT) == 0:
+                        print(f"  [escalator {side}] remove fail: {_e}")
 
-        # ② 슬롯 배정: staging 에이전트 → 큐 맨 뒤 슬롯 (게이트 큐와 동일 방식)
-        # JuPedSim 에서 제거 + 가상 slot 위치로 ease-in (시각적 줄서기)
-        for _side in ("upper", "lower"):
-            _queue = esc_sw_queue[_side]
-            if len(_queue) >= ESC_QUEUE_MAX:
-                continue
-            _staging = sorted(
-                [(_aid, agent_data[_aid]["esc_queue_enter"])
-                 for _agent in sim.agents()
-                 for _aid in [_agent.id]
-                 if agent_data.get(_aid, {}).get("esc_slot") == "staging"
-                 and agent_data.get(_aid, {}).get("esc_side") == _side],
-                key=lambda x: x[1]
-            )
-            for _aid, _ in _staging:
-                if len(_queue) >= ESC_QUEUE_MAX:
-                    break
-                _slot_idx = len(_queue)
-                _slot_x, _slot_y = ESC_QUEUE_SLOTS[_side][_slot_idx]
-                try:
-                    _cur = sim.agent(_aid).position
-                    _queue.append(_aid)
-                    _ad = agent_data[_aid]
-                    _ad["esc_slot"] = _slot_idx
-                    _ad["esc_visual_x"] = _cur[0]
-                    _ad["esc_visual_y"] = _cur[1]
-                    _ad["esc_shift_from_x"] = _cur[0]
-                    _ad["esc_shift_from_y"] = _cur[1]
-                    _ad["esc_target_x"] = _slot_x
-                    _ad["esc_target_y"] = _slot_y
-                    _ad["esc_shift_start"] = current_time
-                    sim.mark_agent_for_removal(_aid)
-                except Exception:
-                    pass
-
-        # ③ capture + 큐 전진
-        for _side in ("upper", "lower"):
-            _s = escalator_state[_side]
-            _queue = esc_sw_queue[_side]
-
-            # 서비스 완료 체크 — 직전 사이클에 캡처된 모든 에이전트 (pair) 방출
-            if current_time >= _s["busy_until"] and _s["captured"]:
-                while _s["captured"]:
-                    _done = _s["captured"].pop(0)
-                    stats["escalator_processed"][_side] += 1
-                    if _done in agent_data:
-                        agent_data[_done]["sink_time"] = current_time
-                        agent_data[_done]["sink_side"] = _side
-                _s["busy_until"] = 0.0
-
-            # 강제 진입: 큐 비었을 때 capture zone 내 가장 가까운 2명(pair) 흡수
-            if current_time >= _s["busy_until"] and not _queue:
-                _cz = _cz_u if _side == "upper" else _cz_l
-                _wp_ref = ESC_WP_UPPER if _side == "upper" else ESC_WP_LOWER
-                _cands = []
-                for _ag in sim.agents():
-                    _aad = agent_data.get(_ag.id)
-                    if _aad is None or not _aad.get("serviced"):
-                        continue
-                    if _aad.get("esc_slot") == "captured":
-                        continue
-                    _ax, _ay = _ag.position
-                    if (_cz["x_range"][0] <= _ax <= _cz["x_range"][1] and
-                            _cz["y_range"][0] <= _ay <= _cz["y_range"][1]):
-                        _d = np.hypot(_ax - _wp_ref[0], _ay - _wp_ref[1])
-                        _cands.append((_d, _ag.id))
-                _cands.sort()
-                _pair_ids = [c[1] for c in _cands[:2]]  # 가장 가까운 2명
-                if _pair_ids:
-                    try:
-                        for _cid in _pair_ids:
-                            sim.mark_agent_for_removal(_cid)
-                            _s["captured"].append(_cid)
-                            agent_data[_cid]["escalator_enter_time"] = current_time
-                            agent_data[_cid]["esc_slot"] = "captured"
-                        _s["busy_until"] = current_time + ESCALATOR_SERVICE_TIME
-                    except Exception:
-                        pass
-
-            # 준비 완료 + 큐 있으면 앞 2명(pair) 동시 방출 (가상 큐 - mark_for_removal 불필요)
-            if current_time >= _s["busy_until"] and _queue:
-                _pair_popped = []
-                for _ in range(min(2, len(_queue))):
-                    _pair_popped.append(_queue.pop(0))
-                for _front in _pair_popped:
-                    _s["captured"].append(_front)
-                    if _front in agent_data:
-                        agent_data[_front]["escalator_enter_time"] = current_time
-                        agent_data[_front]["esc_slot"] = "captured"
-                _s["busy_until"] = current_time + ESCALATOR_SERVICE_TIME
-
-                # 큐 전진: 나머지 agents 의 target slot 을 2칸 앞으로 shift
-                for _new_idx, _aid in enumerate(_queue):
-                    _ad = agent_data[_aid]
-                    _new_x, _new_y = ESC_QUEUE_SLOTS[_side][_new_idx]
-                    if (abs(_new_x - _ad.get("esc_target_x", _new_x)) > 1e-6 or
-                            abs(_new_y - _ad.get("esc_target_y", _new_y)) > 1e-6):
-                        _ad["esc_shift_from_x"] = _ad.get("esc_visual_x", _new_x)
-                        _ad["esc_shift_from_y"] = _ad.get("esc_visual_y", _new_y)
-                        _ad["esc_target_x"] = _new_x
-                        _ad["esc_target_y"] = _new_y
-                        _ad["esc_shift_start"] = current_time
-                    _ad["esc_slot"] = _new_idx
-
-            _s["queue_len"] = len(_queue)
-
+            s["queue_len"] = len(s["captured"])
 
         # 에스컬레이터 큐 길이 기록 (통계)
         if step % int(1.0 / DT) == 0:
@@ -1477,11 +1178,6 @@ def run_simulation():
             _queued = sum(len(q) for q in sw_queue)
             z2 += _queued
             z1 += _queued
-            # 에스컬 가상 큐 (슬롯 대기) agent 를 Z3B/Z4B 에 포함 — 2026-04-22
-            # (esc_sw_queue agent 들은 sim.agents()에서 제거됨)
-            z3b += len(esc_sw_queue["lower"])   # lower = exit1 = Z3B
-            z4b += len(esc_sw_queue["upper"])   # upper = exit4 = Z4B
-            z1  += len(esc_sw_queue["lower"]) + len(esc_sw_queue["upper"])
             # 에스컬 capture 에이전트는 Z3C/Z4C (서비스 중)에 포함
             z3c += len(escalator_state["lower"]["captured"])
             z4c += len(escalator_state["upper"]["captured"])
@@ -1667,8 +1363,6 @@ STATE_COLORS = {
     "queue":    "#EF6C00",
     "service":  "#C62828",
     "passed":   "#1565C0",
-    "esc_queue":   "#6A1B9A",   # 에스컬 슬롯 배정 (보라)
-    "esc_staging": "#AD1457",   # 에스컬 staging 대기 (자홍)
 }
 # 태그리스 에이전트 색상 (밝은 계열)
 TAGLESS_COLORS = {
@@ -1676,8 +1370,6 @@ TAGLESS_COLORS = {
     "queue":    "#FFD600",
     "service":  "#FF6D00",
     "passed":   "#00BFA5",
-    "esc_queue":   "#CE93D8",
-    "esc_staging": "#F8BBD0",
 }
 
 
@@ -1748,8 +1440,11 @@ def draw_frame(ax, positions, gates, obstacles, gate_openings, time_sec):
         ax.add_patch(mpatches.Rectangle((zx0, zy0), zx1 - zx0, zy1 - zy0,
                      facecolor='#1976D2', edgecolor='#0D47A1',
                      linestyle='--', linewidth=1.5, alpha=0.35, zorder=5))
-        # 에스컬 핸드레일/벽 (우측만) — 좌측 벽은 실제 물리벽 없어 삭제 (2026-04-20)
+        # 에스컬 핸드레일/벽 (corridor-concourse 경계, capture 입구만 열림)
         wall_y = cy1 if esc["side"] == "lower" else cy0
+        if zx0 > cx0:
+            ax.plot([cx0, zx0], [wall_y, wall_y], color='#212121',
+                    linewidth=3, solid_capstyle='butt', zorder=11)
         if cx1 > zx1:
             ax.plot([zx1, cx1], [wall_y, wall_y], color='#212121',
                     linewidth=3, solid_capstyle='butt', zorder=11)
@@ -1801,15 +1496,15 @@ def create_snapshots(frames, gates, obstacles, gate_openings):
     fig.suptitle('성수역 서쪽 대합실 (CFSM V2, 소프트웨어 큐)',
                  fontsize=16, fontweight='bold')
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "snapshots_escalator.png", dpi=150, bbox_inches='tight')
+    fig.savefig(OUTPUT_DIR / "snapshots_avm_demo.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_escalator.png'}")
+    print(f"  스냅샷: {OUTPUT_DIR / 'snapshots_avm_demo.png'}")
 
 
 def create_mp4(frames, gates, obstacles, gate_openings):
     from matplotlib.animation import FuncAnimation, FFMpegWriter
     import imageio_ffmpeg
-    target_frames = [(t, pos) for t, pos in frames if t <= SIM_TIME]
+    target_frames = [(t, pos) for t, pos in frames if t <= 120]
     if not target_frames:
         return
     fig, ax = plt.subplots(figsize=(14, 8))
@@ -1821,7 +1516,7 @@ def create_mp4(frames, gates, obstacles, gate_openings):
                      fontsize=12, fontweight='bold')
 
     anim = FuncAnimation(fig, animate, frames=len(target_frames), interval=100)
-    mp4_path = OUTPUT_DIR / "simulation_escalator.mp4"
+    mp4_path = OUTPUT_DIR / "simulation_avm_demo.mp4"
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     plt.rcParams['animation.ffmpeg_path'] = ffmpeg_path
     writer = FFMpegWriter(fps=10, bitrate=2000,
@@ -1834,7 +1529,7 @@ def create_mp4(frames, gates, obstacles, gate_openings):
 def save_trajectories(trajectory_data):
     """궤적 데이터를 CSV로 저장"""
     import csv
-    traj_path = OUTPUT_DIR / "trajectories_escalator.csv"
+    traj_path = OUTPUT_DIR / "trajectories_avm_demo.csv"
     with open(traj_path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(["time", "agent_id", "x", "y", "gate_idx", "state"])
@@ -1958,9 +1653,9 @@ def plot_queue_history(queue_history):
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "queue_history_escalator.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "queue_history_avm_demo.png", dpi=150)
     plt.close(fig)
-    print(f"  대기열: {OUTPUT_DIR / 'queue_history_escalator.png'}")
+    print(f"  대기열: {OUTPUT_DIR / 'queue_history_avm_demo.png'}")
 
 
 def plot_service_time_dist(service_times):
@@ -1976,9 +1671,9 @@ def plot_service_time_dist(service_times):
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "service_time_escalator.png", dpi=150)
+    fig.savefig(OUTPUT_DIR / "service_time_avm_demo.png", dpi=150)
     plt.close(fig)
-    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_escalator.png'}")
+    print(f"  서비스시간: {OUTPUT_DIR / 'service_time_avm_demo.png'}")
 
 
 # =============================================================================

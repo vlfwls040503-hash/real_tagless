@@ -37,11 +37,11 @@ def _worker_init():
 
 
 def _run_scenario_worker(args):
-    """단일 시나리오 워커. (sid, params, raw_dir, model, esc_service_time, save_traj) 받음.
+    """단일 시나리오 워커. (sid, params, raw_dir, model, esc_service_time, save_traj, time_gap) 받음.
 
     각 프로세스마다 jupedsim 새로 import (process pool은 isolated).
     """
-    sid, params, raw_dir, model, esc_service_time, save_traj = args
+    sid, params, raw_dir, model, esc_service_time, save_traj, time_gap = args
     raw_dir = pathlib.Path(raw_dir)
 
     sys.path.insert(0, str(SIM_DIR))
@@ -56,6 +56,11 @@ def _run_scenario_worker(args):
         if key.startswith("_"):
             continue
         setattr(runner, key, val)
+
+    # CFSM time_gap 캘리브레이션용 override
+    if time_gap is not None:
+        runner.CFSM_TIME_GAP = time_gap
+        runner.DYNAMIC_TIME_GAP = False  # 고정 T 로 grid search
 
     runner.BATCH_METRICS_OUT = raw_dir / f"agents_{sid}.csv"
     runner.BATCH_ZONE_CSV_OUT = raw_dir / f"zones_{sid}.csv"
@@ -179,6 +184,10 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--cfg", type=str, default=None,
                     help="cfg 필터 콤마구분 (예: 1,2,3,4)")
+    ap.add_argument("--p-only", type=float, default=None,
+                    help="특정 p 만 (예: 0.5)")
+    ap.add_argument("--time-gap", type=float, default=None,
+                    help="CFSM time_gap override (캘리브레이션 grid search 용)")
     args = ap.parse_args()
     cfg_filter = None
     if args.cfg:
@@ -201,6 +210,8 @@ def main():
     scenarios = list(iter_scenarios())
     if cfg_filter is not None:
         scenarios = [(sid, p) for sid, p in scenarios if p["_config"] in cfg_filter]
+    if args.p_only is not None:
+        scenarios = [(sid, p) for sid, p in scenarios if abs(p["_p"] - args.p_only) < 1e-6]
     if args.limit:
         scenarios = scenarios[:args.limit]
 
@@ -224,7 +235,8 @@ def main():
 
     # 워커 인자 준비
     worker_args = [
-        (sid, params, str(raw_dir), args.model, args.esc_service_time, args.save_traj)
+        (sid, params, str(raw_dir), args.model, args.esc_service_time,
+         args.save_traj, args.time_gap)
         for sid, params in todo
     ]
 
