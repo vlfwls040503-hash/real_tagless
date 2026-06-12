@@ -1,0 +1,138 @@
+{
+  "15:55": {
+    "Downward": {
+      "Truck_L": 3,
+      "Car": 5
+    },
+    "Upward": {
+      "Car": 1
+    }
+  },
+  "16:00": {
+    "Downward": {
+      "Car": 26,
+      "Truck_S": 11,
+      "Truck_L": 2
+    },
+    "Upward": {
+      "Car": 34,
+      "Truck_S": 6,
+      "Truck_L": 2,
+      "Bus": 2
+    }
+  },
+  "16:05": {
+    "Upward": {
+      "Bus": 3,
+      "Car": 29,
+      "Truck_L": 5,
+      "Truck_S": 6
+    },
+    "Downward": {
+      "Car": 26,
+      "Truck_S": 7,
+      "Truck_L": 1
+    }
+  },
+  "16:10": {
+    "Downward": {
+      "Bus": 2,
+      "Truck_S": 5,
+      "Car": 26,
+      "Truck_L": 4
+    },
+    "Upward": {
+      "Car": 29,
+      "Bus": 2,
+      "Truck_S": 8
+    }
+  },
+  "16:15": {
+    "Upward": {
+      "Car": 24,
+      "Truck_S": 5,
+      "Truck_L": 1,
+      "Bus": 1
+    },
+    "Downward": {
+      "Car": 20,
+      "Truck_S": 5,
+      "Truck_L": 7
+    }
+  },
+  "16:20": {
+    "Downward": {
+      "Car": 19,
+      "Truck_S": 11,
+      "Truck_L": 3
+    },
+    "Upward": {
+      "Car": 22,
+      "Truck_S": 3,
+      "Truck_L": 1
+    }
+  },
+  "16:25": {
+    "Downward": {
+      "Car": 27,
+      "Truck_S": 12,
+      "Truck_L": 4,
+      "Bus": 1
+    },
+    "Upward": {
+      "Car": 24,
+      "Truck_S": 10,
+      "Truck_L": 2
+    }
+  },
+  "16:30": {
+    "Downward": {
+      "Car": 17,
+      "Truck_S": 9,
+      "Truck_L": 5
+    },
+    "Upward": {
+      "Car": 31,
+      "Truck_L": 1,
+      "Truck_S": 8
+    }
+  },
+  "16:35": {
+    "Downward": {
+      "Car": 17,
+      "Truck_S": 4,
+      "Truck_L": 6
+    },
+    "Upward": {
+      "Car": 27,
+      "Truck_S": 6,
+      "Truck_L": 1
+    }
+  },
+  "16:40": {
+    "Upward": {
+      "Car": 31,
+      "Bus": 1,
+      "Truck_S": 3,
+      "Truck_L": 1
+    },
+    "Downward": {
+      "Car": 23,
+      "Truck_L": 4,
+      "Truck_S": 2
+    }
+  },
+  "16:45": {
+    "Downward": {
+      "Bus": 2,
+      "Car": 37,
+      "Truck_S": 5,
+      "Truck_L": 3
+    },
+    "Upward": {
+      "Car": 20,
+      "Truck_S": 8,
+      "Truck_L": 1
+    }
+  }
+}
